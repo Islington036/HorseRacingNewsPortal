@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>競馬ニュース早見ポータル</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7f2;
+      --panel: #ffffff;
+      --ink: #172018;
+      --muted: #667066;
+      --line: #dce3d9;
+      --accent: #0e6f4f;
+      --accent-strong: #09563c;
+      --warn: #9a4d00;
+      --danger: #a33131;
+      --chip: #e8f1ec;
+      --shadow: 0 12px 28px rgba(23, 32, 24, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .app-shell {
+      width: min(1160px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 22px 0 42px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      margin: 0 -14px 18px;
+      padding: 14px;
+      background: rgba(245, 247, 242, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(220, 227, 217, 0.86);
+    }
+
+    .topbar-inner {
+      width: min(1160px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 34px);
+      line-height: 1.15;
+      font-weight: 800;
+    }
+
+    .subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(220px, 320px) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .search-wrap {
+      position: relative;
+    }
+
+    .search-wrap::before {
+      content: "⌕";
+      position: absolute;
+      left: 13px;
+      top: 50%;
+      transform: translateY(-52%);
+      color: var(--muted);
+      font-size: 18px;
+      pointer-events: none;
+    }
+
+    input[type="search"] {
+      width: 100%;
+      height: 42px;
+      padding: 0 12px 0 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 15px;
+      outline: none;
+    }
+
+    input[type="search"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(14, 111, 79, 0.16);
+    }
+
+    button {
+      height: 42px;
+      min-width: 116px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.12s ease, background 0.12s ease, opacity 0.12s ease;
+    }
+
+    button:hover {
+      background: var(--accent-strong);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.72;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 14px;
+    }
+
+    .status-panel,
+    .summary-panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .status-panel {
+      padding: 13px 14px;
+    }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+      min-height: 24px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .status-line strong {
+      color: var(--ink);
+    }
+
+    .error-list {
+      display: none;
+      margin: 10px 0 0;
+      padding: 10px 12px;
+      border-left: 4px solid var(--warn);
+      background: #fff8ed;
+      color: #573002;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .error-list.is-visible {
+      display: block;
+    }
+
+    .summary-panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px;
+      min-width: 280px;
+      max-width: 440px;
+    }
+
+    .chip {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: var(--chip);
+      color: #244235;
+      font-size: 13px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .chip span {
+      color: var(--accent-strong);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .news-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .news-card {
+      display: grid;
+      grid-template-columns: 132px minmax(0, 1fr);
+      gap: 14px;
+      min-height: 112px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 4px 18px rgba(23, 32, 24, 0.05);
+      text-decoration: none;
+      transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+    }
+
+    .news-card:hover {
+      border-color: rgba(14, 111, 79, 0.42);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow);
+    }
+
+    .thumb {
+      width: 100%;
+      height: 92px;
+      border-radius: 7px;
+      background: #dbe5dc;
+    }
+
+    img.thumb {
+      object-fit: cover;
+    }
+
+    .thumb-fallback {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #c7d4ca;
+      color: #315140;
+      font-size: 13px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .news-body {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .headline {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.48;
+      font-weight: 760;
+      overflow-wrap: anywhere;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source-badge {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef3ee;
+      color: #2e4739;
+      font-weight: 700;
+    }
+
+    .empty-state {
+      display: none;
+      padding: 34px 18px;
+      border: 1px dashed #c6d0c4;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.58);
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.7;
+    }
+
+    .empty-state.is-visible {
+      display: block;
+    }
+
+    @media (max-width: 820px) {
+      .topbar-inner,
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .controls {
+        grid-template-columns: 1fr auto;
+      }
+
+      .summary-panel {
+        max-width: none;
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .app-shell {
+        width: min(100% - 18px, 1160px);
+        padding-top: 12px;
+      }
+
+      .topbar {
+        margin: 0 -9px 12px;
+        padding: 10px 9px;
+      }
+
+      .controls {
+        grid-template-columns: 1fr;
+      }
+
+      button {
+        width: 100%;
+      }
+
+      .news-card {
+        grid-template-columns: 96px minmax(0, 1fr);
+        gap: 10px;
+        min-height: 96px;
+      }
+
+      .thumb {
+        height: 76px;
+      }
+
+      .headline {
+        font-size: 15px;
+        line-height: 1.42;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div>
+          <h1>競馬ニュース早見ポータル</h1>
+          <p class="subtitle">主要紙のヘッドラインを3日分だけ拾って時系列で確認</p>
+        </div>
+        <div class="controls" role="search">
+          <label class="search-wrap">
+            <span class="visually-hidden">ヘッドライン検索</span>
+            <input id="searchInput" type="search" placeholder="見出し・媒体名で検索" autocomplete="off">
+          </label>
+          <button id="refreshButton" type="button">更新</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="status-grid" aria-live="polite">
+      <div class="status-panel">
+        <div id="statusLine" class="status-line">
+          <strong>待機中</strong>
+          <span>更新ボタンで最新ヘッドラインを取得します。</span>
+        </div>
+        <div id="errorList" class="error-list"></div>
+      </div>
+      <div id="siteSummary" class="summary-panel"></div>
+    </section>
+
+    <section id="newsList" class="news-list"></section>
+    <section id="emptyState" class="empty-state">
+      表示できるニュースがありません。検索条件を変えるか、更新を試してください。
+    </section>
+  </main>
+
+  <script>
+    // ===== カスタマイズ用設定 =====
+    const CONFIG = {
+      DAYS_BACK: 3,
+      REQUEST_TIMEOUT_MS: 9000,
+      CACHE_KEY: "keiba-news-portal-cache-v1",
+      FALLBACK_THUMBNAIL:
+        "data:image/svg+xml;charset=UTF-8," +
+        encodeURIComponent(
+          "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 180'><rect width='320' height='180' fill='#dfe9e0'/><path d='M55 122c35-57 85-72 150-44 22 10 40 13 60 6-18 33-55 51-100 48-45-4-82 5-110 25z' fill='#0e6f4f'/><circle cx='122' cy='63' r='14' fill='#6a5130'/><text x='160' y='156' text-anchor='middle' font-family='sans-serif' font-size='21' fill='#244235'>Keiba News</text></svg>"
+        ).replace(/'/g, "%27"),
+      CORS_PROXY(url) {
+        return "https://corsproxy.io/?" + encodeURIComponent(url);
+      },
+      CORS_PROXY_FALLBACKS: [
+        (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+        (url) => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(url)
+      ],
+      SITES: [
+        {
+          id: "hochi",
+          name: "スポーツ報知",
+          url: "https://hochi.news/tag/%E7%AB%B6%E9%A6%AC",
+          baseUrl: "https://hochi.news",
+          parser: "hochi"
+        },
+        {
+          id: "nikkan",
+          name: "日刊スポーツ",
+          url: "https://www.nikkansports.com/keiba/",
+          baseUrl: "https://www.nikkansports.com",
+          parser: "nikkan"
+        },
+        {
+          id: "tospo",
+          name: "東スポ競馬",
+          url: "https://tospo-keiba.jp/news",
+          baseUrl: "https://tospo-keiba.jp",
+          parser: "tospo"
+        },
+        {
+          id: "sanspo",
+          name: "サンスポ",
+          url: "https://www.sanspo.com/race/keiba/",
+          baseUrl: "https://www.sanspo.com",
+          parser: "generic"
+        },
+        {
+          id: "sponichi",
+          name: "スポニチ競馬Web",
+          url: "https://keiba.sponichi.co.jp/news",
+          baseUrl: "https://keiba.sponichi.co.jp",
+          parser: "sponichi"
+        }
+      ]
+    };
+
+    const state = {
+      allItems: [],
+      errors: [],
+      lastUpdatedAt: null,
+      isLoading: false
+    };
+
+    const elements = {
+      refreshButton: document.querySelector("#refreshButton"),
+      searchInput: document.querySelector("#searchInput"),
+      statusLine: document.querySelector("#statusLine"),
+      errorList: document.querySelector("#errorList"),
+      siteSummary: document.querySelector("#siteSummary"),
+      newsList: document.querySelector("#newsList"),
+      emptyState: document.querySelector("#emptyState")
+    };
+
+    elements.refreshButton.addEventListener("click", refreshAll);
+    elements.searchInput.addEventListener("input", render);
+    window.addEventListener("DOMContentLoaded", boot);
+
+    function boot() {
+      loadCache();
+      render();
+    }
+
+    async function refreshAll() {
+      state.isLoading = true;
+      state.errors = [];
+      setStatus("取得中", "5サイトからヘッドラインを取得しています。");
+      elements.refreshButton.disabled = true;
+      elements.refreshButton.textContent = "更新中";
+      renderErrors();
+
+      const results = await Promise.allSettled(CONFIG.SITES.map(fetchSite));
+      const fetchedItems = [];
+
+      results.forEach((result, index) => {
+        const site = CONFIG.SITES[index];
+        if (result.status === "fulfilled") {
+          fetchedItems.push(...result.value);
+        } else {
+          state.errors.push({
+            site: site.name,
+            message: result.reason && result.reason.message ? result.reason.message : String(result.reason)
+          });
+        }
+      });
+
+      const merged = dedupeByUrl(fetchedItems)
+        .filter(isWithinWindow)
+        .sort((a, b) => b.publishedAt - a.publishedAt);
+
+      if (merged.length > 0) {
+        state.allItems = merged;
+        state.lastUpdatedAt = new Date();
+        saveCache();
+      }
+
+      state.isLoading = false;
+      elements.refreshButton.disabled = false;
+      elements.refreshButton.textContent = "更新";
+
+      if (merged.length > 0) {
+        setStatus("更新完了", `${merged.length}件を表示しています。`);
+      } else if (state.allItems.length > 0) {
+        setStatus("取得失敗", "新しい取得結果がないため、前回キャッシュを表示しています。");
+      } else {
+        setStatus("取得失敗", "表示できるヘッドラインを取得できませんでした。");
+      }
+
+      render();
+    }
+
+    async function fetchSite(site) {
+      const html = await fetchText(site.url);
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const parser = PARSERS[site.parser] || PARSERS.generic;
+      const items = parser(doc, site)
+        .map((item) => normalizeItem(item, site))
+        .filter(Boolean)
+        .filter((item) => item.title && item.url && item.publishedAt instanceof Date && !Number.isNaN(item.publishedAt.getTime()));
+
+      if (items.length === 0) {
+        throw new Error("ヘッドラインを抽出できませんでした");
+      }
+
+      return items;
+    }
+
+    async function fetchText(url) {
+      const proxyUrls = [
+        CONFIG.CORS_PROXY(url),
+        ...CONFIG.CORS_PROXY_FALLBACKS.map((buildUrl) => buildUrl(url))
+      ];
+      let lastError = null;
+
+      for (const proxyUrl of proxyUrls) {
+        try {
+          return await fetchProxyText(proxyUrl);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError || new Error("取得に失敗しました");
+    }
+
+    async function fetchProxyText(proxyUrl) {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS);
+
+      try {
+        const response = await fetch(proxyUrl, {
+          signal: controller.signal,
+          headers: { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        return await response.text();
+      } catch (error) {
+        if (error.name === "AbortError") {
+          throw new Error("タイムアウトしました");
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    }
+
+    const PARSERS = {
+      hochi(doc, site) {
+        return [
+          ...extractJsonLdItems(doc, site),
+          ...extractAnchorsWithDates(doc, site, {
+            linkSelector: "a[href*='/articles/']",
+            datePattern: /(\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2})/
+          })
+        ];
+      },
+
+      nikkan(doc, site) {
+        return [
+          ...extractJsonLdItems(doc, site),
+          ...extractAnchorsWithDates(doc, site, {
+            linkSelector: "a[href*='/keiba/news/'], a[href*='/keiba/column/']",
+            datePattern: /\[?(\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2})\]?/
+          })
+        ];
+      },
+
+      sponichi(doc, site) {
+        return [
+          ...extractJsonLdItems(doc, site),
+          ...extractAnchorsWithDates(doc, site, {
+            linkSelector: "a[href*='/news/']",
+            datePattern: /(\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2})/
+          })
+        ];
+      },
+
+      tospo(doc, site) {
+        return [
+          ...extractTospoArticleList(doc, site),
+          ...extractJsonLdItems(doc, site),
+          ...extractAnchorsWithTimeElements(doc, site)
+        ];
+      },
+
+      generic(doc, site) {
+        return [
+          ...extractJsonLdItems(doc, site),
+          ...extractAnchorsWithTimeElements(doc, site),
+          ...extractAnchorsWithDates(doc, site, {
+            linkSelector: "a[href]",
+            datePattern: /(\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}|\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}|\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2})/
+          })
+        ];
+      }
+    };
+
+    function extractTospoArticleList(doc, site) {
+      const component = doc.querySelector("article-list-slug-main");
+      const mainData = component && safeJsonParse(component.getAttribute(":main"));
+      const articleList = mainData && Array.isArray(mainData.articleList) ? mainData.articleList : [];
+
+      return articleList.map((article) => ({
+        title: article.title || article.imgAlt,
+        url: article.linkUrl,
+        publishedAt: article.date && article.date.date && article.date.time
+          ? parseDate(`${article.date.date} ${article.date.time}`)
+          : null,
+        thumbnail: article.imgUrl,
+        source: site.name
+      }));
+    }
+
+    function extractJsonLdItems(doc, site) {
+      const items = [];
+
+      doc.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+        const data = safeJsonParse(script.textContent);
+        flattenJsonLd(data).forEach((node) => {
+          const type = Array.isArray(node["@type"]) ? node["@type"].join(" ") : node["@type"];
+          if (!type || !/NewsArticle|Article|BlogPosting/i.test(type)) return;
+
+          items.push({
+            title: node.headline || node.name,
+            url: node.url || node.mainEntityOfPage && (node.mainEntityOfPage["@id"] || node.mainEntityOfPage.url),
+            publishedAt: parseDate(node.datePublished || node.dateCreated || node.dateModified),
+            thumbnail: pickImageFromJsonLd(node.image),
+            source: site.name
+          });
+        });
+      });
+
+      return items;
+    }
+
+    function flattenJsonLd(input) {
+      if (!input) return [];
+      const queue = Array.isArray(input) ? [...input] : [input];
+      const nodes = [];
+
+      while (queue.length > 0) {
+        const node = queue.shift();
+        if (!node || typeof node !== "object") continue;
+        nodes.push(node);
+        if (Array.isArray(node["@graph"])) queue.push(...node["@graph"]);
+        if (Array.isArray(node.itemListElement)) {
+          node.itemListElement.forEach((entry) => {
+            if (entry && typeof entry === "object") {
+              queue.push(entry.item || entry);
+            }
+          });
+        }
+      }
+
+      return nodes;
+    }
+
+    function extractAnchorsWithTimeElements(doc, site) {
+      const items = [];
+
+      doc.querySelectorAll("time").forEach((timeElement) => {
+        const card = closestUsefulContainer(timeElement);
+        const anchor = card && card.querySelector("a[href]");
+        if (!anchor) return;
+
+        items.push({
+          title: cleanTitle(anchor.textContent),
+          url: anchor.getAttribute("href"),
+          publishedAt: parseDate(timeElement.getAttribute("datetime") || timeElement.textContent),
+          thumbnail: findImageNear(anchor, site),
+          source: site.name
+        });
+      });
+
+      return items;
+    }
+
+    function extractAnchorsWithDates(doc, site, options) {
+      const items = [];
+      const seen = new Set();
+
+      doc.querySelectorAll(options.linkSelector).forEach((anchor) => {
+        const title = cleanTitle(anchor.textContent);
+        if (!isLikelyHeadline(title)) return;
+
+        const container = closestUsefulContainer(anchor);
+        const text = [anchor.textContent, container && container.textContent, anchor.getAttribute("aria-label"), anchor.getAttribute("title")]
+          .filter(Boolean)
+          .join(" ");
+        const match = text.match(options.datePattern);
+        if (!match) return;
+
+        const url = absoluteUrl(anchor.getAttribute("href"), site.baseUrl);
+        if (!url || seen.has(url)) return;
+        seen.add(url);
+
+        items.push({
+          title,
+          url,
+          publishedAt: parseDate(match[1]),
+          thumbnail: findImageNear(anchor, site),
+          source: site.name
+        });
+      });
+
+      return items;
+    }
+
+    function normalizeItem(raw, site) {
+      const url = absoluteUrl(raw.url, site.baseUrl);
+      const title = cleanTitle(raw.title);
+      const publishedAt = raw.publishedAt instanceof Date ? raw.publishedAt : parseDate(raw.publishedAt);
+
+      if (!url || !title || !publishedAt) return null;
+
+      return {
+        id: `${site.id}:${url}`,
+        sourceId: site.id,
+        source: raw.source || site.name,
+        title,
+        url,
+        publishedAt,
+        thumbnail: resolveThumbnail(raw.thumbnail, site, url)
+      };
+    }
+
+    function closestUsefulContainer(element) {
+      return element.closest(
+        "article, li, dl, [class*='article'], [class*='news'], [class*='story'], [class*='card'], section, div"
+      ) || element.parentElement;
+    }
+
+    function findImageNear(anchor, site) {
+      const containers = collectImageSearchContainers(anchor);
+      for (const container of containers) {
+        const candidates = collectImageCandidates(container);
+        if (candidates.length > 0) {
+          return resolveThumbnail(candidates[0], site, anchor.getAttribute("href"));
+        }
+      }
+      return resolveThumbnail("", site, anchor.getAttribute("href"));
+    }
+
+    function collectImageSearchContainers(anchor) {
+      const containers = [anchor];
+      let current = anchor.parentElement;
+      let depth = 0;
+      while (current && depth < 5) {
+        containers.push(current);
+        if (current.matches("article, li, dl, [class*='item'], [class*='card'], [class*='story']")) {
+          break;
+        }
+        current = current.parentElement;
+        depth += 1;
+      }
+
+      return [...new Set(containers)].filter(Boolean);
+    }
+
+    function collectImageCandidates(container) {
+      const candidates = [];
+
+      container.querySelectorAll("source, img").forEach((element) => {
+        candidates.push(
+          element.getAttribute("data-srcset"),
+          element.getAttribute("data-lazy-srcset"),
+          element.getAttribute("srcset"),
+          element.getAttribute("data-src"),
+          element.getAttribute("data-original"),
+          element.getAttribute("data-lazy-src"),
+          element.getAttribute("data-original-src"),
+          element.getAttribute("data-image"),
+          extractCssBackgroundUrl(element.getAttribute("style")),
+          element.getAttribute("src")
+        );
+      });
+
+      candidates.push(extractCssBackgroundUrl(container.getAttribute("style")));
+      return candidates.map(firstSrcFromSet).filter(isUsableImageValue);
+    }
+
+    function firstSrcFromSet(value) {
+      if (!value) return "";
+      return String(value).split(",")[0].trim().split(/\s+/)[0];
+    }
+
+    function extractCssBackgroundUrl(style) {
+      if (!style) return "";
+      const match = String(style).match(/background(?:-image)?\s*:\s*url\((['"]?)(.*?)\1\)/i);
+      return match ? match[2] : "";
+    }
+
+    function resolveThumbnail(value, site, articleUrl) {
+      const direct = absoluteUrl(firstSrcFromSet(value), site.baseUrl);
+      if (isUsableImageUrl(direct)) return direct;
+
+      const inferred = inferThumbnailFromArticleUrl(articleUrl, site);
+      if (isUsableImageUrl(inferred)) return inferred;
+
+      return CONFIG.FALLBACK_THUMBNAIL;
+    }
+
+    function inferThumbnailFromArticleUrl(articleUrl, site) {
+      const url = absoluteUrl(articleUrl, site.baseUrl);
+      if (!url || site.id !== "nikkan") return "";
+
+      try {
+        const parsed = new URL(url);
+        parsed.pathname = parsed.pathname.replace(/\/([^/]+)\.html$/, "/img/$1-w200_0.jpg");
+        return parsed.href;
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    function isUsableImageValue(value) {
+      return isUsableImageUrl(absoluteUrl(firstSrcFromSet(value), "https://example.com"));
+    }
+
+    function isUsableImageUrl(url) {
+      if (!url) return false;
+      if (url === CONFIG.FALLBACK_THUMBNAIL) return true;
+      return !/blank\.gif|spacer\.gif|transparent|noimage|dummy|ogp_default|thumb_[^/]*_og|\/icons?\/|logo|favicon|data:image\/gif/i.test(url);
+    }
+
+    function parseDate(value) {
+      if (!value) return null;
+      const raw = String(value).trim();
+
+      const native = new Date(raw);
+      if (!Number.isNaN(native.getTime())) return native;
+
+      let match = raw.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2}):(\d{2})/);
+      if (match) return makeJstDate(match[1], match[2], match[3], match[4], match[5]);
+
+      match = raw.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s*(\d{1,2}):(\d{2})/);
+      if (match) return makeJstDate(match[1], match[2], match[3], match[4], match[5]);
+
+      match = raw.match(/(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2}):(\d{2})/);
+      if (match) {
+        const nowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+        return makeJstDate(nowJst.getFullYear(), match[1], match[2], match[3], match[4]);
+      }
+
+      return null;
+    }
+
+    function makeJstDate(year, month, day, hour, minute) {
+      const utcMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 9, Number(minute));
+      return new Date(utcMs);
+    }
+
+    function isWithinWindow(item) {
+      const now = new Date();
+      const cutoff = now.getTime() - CONFIG.DAYS_BACK * 24 * 60 * 60 * 1000;
+      return item.publishedAt.getTime() >= cutoff && item.publishedAt.getTime() <= now.getTime() + 60 * 60 * 1000;
+    }
+
+    function dedupeByUrl(items) {
+      const byUrl = new Map();
+      items.forEach((item) => {
+        const key = item.url.replace(/[?#].*$/, "");
+        const existing = byUrl.get(key);
+        if (!existing || item.publishedAt > existing.publishedAt) {
+          byUrl.set(key, item);
+        }
+      });
+      return [...byUrl.values()];
+    }
+
+    function cleanTitle(value) {
+      return String(value || "")
+        .replace(/\s+/g, " ")
+        .replace(/^競馬\s*/, "")
+        .replace(/\s*\[?記事へ\]?\s*$/g, "")
+        .trim();
+    }
+
+    function isLikelyHeadline(title) {
+      if (!title || title.length < 8) return false;
+      if (/^(TOP|ログイン|ニュース|検索|Page TOP|メニュー|初めての方はこちら)$/i.test(title)) return false;
+      return true;
+    }
+
+    function absoluteUrl(value, baseUrl) {
+      if (!value) return "";
+      const cleaned = String(value).trim();
+      if (!cleaned || cleaned.startsWith("data:")) return cleaned;
+      try {
+        return new URL(cleaned, baseUrl).href;
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    function pickImageFromJsonLd(image) {
+      if (!image) return "";
+      if (typeof image === "string") return image;
+      if (Array.isArray(image)) {
+        return image.map(pickImageFromJsonLd).find(isUsableImageValue) || pickImageFromJsonLd(image[0]);
+      }
+      return image.url || image.contentUrl || "";
+    }
+
+    function safeJsonParse(value) {
+      try {
+        return JSON.parse(value);
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    function render() {
+      const query = elements.searchInput.value.trim().toLowerCase();
+      const filtered = state.allItems.filter((item) => {
+        const haystack = `${item.title} ${item.source}`.toLowerCase();
+        return haystack.includes(query);
+      });
+
+      renderSummary(filtered);
+      renderErrors();
+      elements.newsList.innerHTML = filtered.map(renderCard).join("");
+      attachThumbnailFallbacks();
+      elements.emptyState.classList.toggle("is-visible", filtered.length === 0);
+
+      if (!state.isLoading) {
+        const lastUpdated = state.lastUpdatedAt ? `最終更新: ${formatDateTime(state.lastUpdatedAt)}` : "未更新";
+        const suffix = query ? `検索結果 ${filtered.length}件 / 全${state.allItems.length}件` : `表示 ${filtered.length}件`;
+        if (state.errors.length > 0 && state.allItems.length === 0) {
+          setStatus("取得失敗", "表示できるヘッドラインを取得できませんでした。");
+        } else if (state.errors.length > 0) {
+          setStatus("一部取得失敗", `${suffix}。${lastUpdated}`);
+        } else {
+          setStatus(state.allItems.length ? "表示中" : "待機中", `${suffix}。${lastUpdated}`);
+        }
+      }
+    }
+
+    function renderCard(item) {
+      return `
+        <a class="news-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
+          ${renderThumbnail(item)}
+          <div class="news-body">
+            <h2 class="headline">${escapeHtml(item.title)}</h2>
+            <div class="meta">
+              <span class="source-badge">${escapeHtml(item.source)}</span>
+              <time datetime="${item.publishedAt.toISOString()}">${formatDateTime(item.publishedAt)}</time>
+            </div>
+          </div>
+        </a>
+      `;
+    }
+
+    function renderThumbnail(item) {
+      if (item.thumbnail === CONFIG.FALLBACK_THUMBNAIL) {
+        return renderFallbackThumbnail();
+      }
+
+      return `<img class="thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+    }
+
+    function renderFallbackThumbnail() {
+      return `<div class="thumb thumb-fallback" aria-hidden="true">No Image</div>`;
+    }
+
+    function attachThumbnailFallbacks() {
+      elements.newsList.querySelectorAll("img.thumb").forEach((image) => {
+        const applyFallback = () => {
+          if (image.dataset.fallbackApplied === "true") return;
+          image.dataset.fallbackApplied = "true";
+          const wrapper = document.createElement("template");
+          wrapper.innerHTML = renderFallbackThumbnail();
+          image.replaceWith(wrapper.content.firstElementChild);
+        };
+
+        image.addEventListener("error", applyFallback, { once: true });
+
+        if (!isUsableImageUrl(image.getAttribute("src"))) {
+          applyFallback();
+        } else if (image.complete && image.naturalWidth === 0) {
+          applyFallback();
+        }
+      });
+    }
+
+    function renderSummary(items) {
+      const counts = new Map(CONFIG.SITES.map((site) => [site.id, { name: site.name, count: 0 }]));
+      items.forEach((item) => {
+        const entry = counts.get(item.sourceId);
+        if (entry) entry.count += 1;
+      });
+
+      elements.siteSummary.innerHTML = [...counts.values()]
+        .map((entry) => `<span class="chip">${escapeHtml(entry.name)} <span>${entry.count}</span></span>`)
+        .join("");
+    }
+
+    function renderErrors() {
+      if (state.errors.length === 0) {
+        elements.errorList.classList.remove("is-visible");
+        elements.errorList.innerHTML = "";
+        return;
+      }
+
+      elements.errorList.classList.add("is-visible");
+      elements.errorList.innerHTML = state.errors
+        .map((error) => `<div>${escapeHtml(error.site)}: ${escapeHtml(error.message)}</div>`)
+        .join("");
+    }
+
+    function setStatus(label, message) {
+      elements.statusLine.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(message)}</span>`;
+    }
+
+    function formatDateTime(date) {
+      return new Intl.DateTimeFormat("ja-JP", {
+        timeZone: "Asia/Tokyo",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(date);
+    }
+
+    function saveCache() {
+      try {
+        localStorage.setItem(
+          CONFIG.CACHE_KEY,
+          JSON.stringify({
+            lastUpdatedAt: state.lastUpdatedAt && state.lastUpdatedAt.toISOString(),
+            allItems: state.allItems.map((item) => ({
+              ...item,
+              publishedAt: item.publishedAt.toISOString()
+            }))
+          })
+        );
+      } catch (_error) {
+        state.errors.push({ site: "localStorage", message: "キャッシュ保存に失敗しました" });
+      }
+    }
+
+    function loadCache() {
+      try {
+        const cached = JSON.parse(localStorage.getItem(CONFIG.CACHE_KEY) || "null");
+        if (!cached || !Array.isArray(cached.allItems)) return;
+
+        state.allItems = cached.allItems
+          .map((item) => {
+            const site = CONFIG.SITES.find((entry) => entry.id === item.sourceId) || {
+              id: item.sourceId,
+              baseUrl: item.url
+            };
+            return {
+              ...item,
+              publishedAt: new Date(item.publishedAt),
+              thumbnail: resolveThumbnail(item.thumbnail, site, item.url)
+            };
+          })
+          .filter((item) => !Number.isNaN(item.publishedAt.getTime()))
+          .filter(isWithinWindow)
+          .sort((a, b) => b.publishedAt - a.publishedAt);
+        state.lastUpdatedAt = cached.lastUpdatedAt ? new Date(cached.lastUpdatedAt) : null;
+      } catch (_error) {
+        state.allItems = [];
+        state.lastUpdatedAt = null;
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>
