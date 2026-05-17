@@ -6,7 +6,7 @@
       MAX_DAYS_BACK: 3,
       REQUEST_TIMEOUT_MS: 9000,
       TITLE_HYDRATION_TIMEOUT_MS: 4500,
-      CACHE_KEY: "keiba-news-portal-cache-v1",
+      CACHE_KEY: "keiba-news-portal-cache-v2",
       SETTINGS_KEY: "keiba-news-portal-settings-v1",
       FALLBACK_THUMBNAIL:
         "data:image/svg+xml;charset=UTF-8," +
