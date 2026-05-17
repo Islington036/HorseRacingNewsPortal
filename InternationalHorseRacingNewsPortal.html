@@ -8,6 +8,7 @@
     :root {
       color-scheme: light;
       --bg: #f5f7f2;
+      --topbar-bg: rgba(245, 247, 242, 0.92);
       --panel: #ffffff;
       --ink: #172018;
       --muted: #667066;
@@ -17,7 +18,37 @@
       --warn: #9a4d00;
       --danger: #a33131;
       --chip: #e8f1ec;
+      --chip-ink: #244235;
+      --soft: #eef3ee;
+      --soft-alt: #eef1f6;
+      --notice-bg: #fff8ed;
+      --notice-ink: #573002;
+      --thumb-bg: #dbe5dc;
+      --thumb-line: #c7d4ca;
       --shadow: 0 12px 28px rgba(23, 32, 24, 0.08);
+    }
+
+    body.is-dark {
+      color-scheme: dark;
+      --bg: #000000;
+      --topbar-bg: rgba(0, 0, 0, 0.94);
+      --panel: #050505;
+      --ink: #f2f6f0;
+      --muted: #a7b2a8;
+      --line: #202820;
+      --accent: #2bbf86;
+      --accent-strong: #49d39b;
+      --warn: #f0b45f;
+      --danger: #ff7777;
+      --chip: #122119;
+      --chip-ink: #d9f5e4;
+      --soft: #101a13;
+      --soft-alt: #10151c;
+      --notice-bg: #0f0a02;
+      --notice-ink: #f2c37f;
+      --thumb-bg: #101810;
+      --thumb-line: #293329;
+      --shadow: none;
     }
 
     * {
@@ -61,9 +92,9 @@
       z-index: 10;
       margin: 0 -14px 18px;
       padding: 14px;
-      background: rgba(245, 247, 242, 0.92);
+      background: var(--topbar-bg);
       backdrop-filter: blur(12px);
-      border-bottom: 1px solid rgba(220, 227, 217, 0.86);
+      border-bottom: 1px solid var(--line);
     }
 
     .topbar-inner {
@@ -90,7 +121,7 @@
 
     .controls {
       display: grid;
-      grid-template-columns: minmax(220px, 320px) auto;
+      grid-template-columns: minmax(220px, 320px) auto auto;
       gap: 10px;
       align-items: center;
     }
@@ -153,6 +184,117 @@
       opacity: 0.72;
     }
 
+    .settings-dropdown {
+      position: relative;
+    }
+
+    .settings-summary {
+      height: 42px;
+      min-width: 118px;
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .settings-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .settings-summary::after {
+      content: "▾";
+      color: var(--accent);
+      font-size: 12px;
+    }
+
+    .settings-dropdown[open] .settings-summary::after {
+      transform: rotate(180deg);
+    }
+
+    .settings-current {
+      display: none;
+    }
+
+    .settings-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 8px);
+      z-index: 20;
+      width: min(320px, calc(100vw - 28px));
+      padding: 12px;
+      display: grid;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .setting-group {
+      display: grid;
+      gap: 8px;
+    }
+
+    .setting-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .toggle-row {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 760;
+    }
+
+    .toggle-row input {
+      width: 42px;
+      height: 24px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .segmented-control {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .day-option {
+      width: 100%;
+      min-width: 0;
+      height: 36px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 13px;
+      box-shadow: none;
+    }
+
+    .day-option:hover {
+      background: var(--soft);
+    }
+
+    .day-option.is-active {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
     .status-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -192,8 +334,8 @@
       margin: 10px 0 0;
       padding: 10px 12px;
       border-left: 4px solid var(--warn);
-      background: #fff8ed;
-      color: #573002;
+      background: var(--notice-bg);
+      color: var(--notice-ink);
       font-size: 13px;
       line-height: 1.5;
     }
@@ -304,7 +446,7 @@
 
     .region-tab:hover,
     .site-tab:hover {
-      background: #edf4ef;
+      background: var(--soft);
     }
 
     .region-tab.is-active,
@@ -328,7 +470,7 @@
       padding: 4px 9px;
       border-radius: 999px;
       background: var(--chip);
-      color: #244235;
+      color: var(--chip-ink);
       font-size: 13px;
       font-weight: 650;
       white-space: nowrap;
@@ -353,7 +495,7 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
-      box-shadow: 0 4px 18px rgba(23, 32, 24, 0.05);
+      box-shadow: var(--shadow);
       text-decoration: none;
       transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
     }
@@ -368,7 +510,7 @@
       width: 100%;
       height: 92px;
       border-radius: 7px;
-      background: #dbe5dc;
+      background: var(--thumb-bg);
     }
 
     img.thumb {
@@ -379,8 +521,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      border: 1px solid #c7d4ca;
-      color: #315140;
+      border: 1px solid var(--thumb-line);
+      color: var(--chip-ink);
       font-size: 13px;
       font-weight: 800;
       text-align: center;
@@ -414,25 +556,25 @@
     .source-badge {
       padding: 3px 8px;
       border-radius: 999px;
-      background: #eef3ee;
-      color: #2e4739;
+      background: var(--soft);
+      color: var(--chip-ink);
       font-weight: 700;
     }
 
     .region-badge {
       padding: 3px 8px;
       border-radius: 999px;
-      background: #eef1f6;
-      color: #354055;
+      background: var(--soft-alt);
+      color: var(--ink);
       font-weight: 700;
     }
 
     .empty-state {
       display: none;
       padding: 34px 18px;
-      border: 1px dashed #c6d0c4;
+      border: 1px dashed var(--line);
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.58);
+      background: var(--panel);
       color: var(--muted);
       text-align: center;
       line-height: 1.7;
@@ -450,6 +592,21 @@
 
       .controls {
         grid-template-columns: 1fr auto;
+      }
+
+      .settings-dropdown {
+        grid-column: 1 / -1;
+      }
+
+      .settings-summary {
+        width: 100%;
+      }
+
+      .settings-current {
+        display: inline;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
       }
 
       .filter-group {
@@ -509,7 +666,7 @@
       <div class="topbar-inner">
         <div>
           <h1>海外競馬ニュース早見ポータル</h1>
-          <p class="subtitle">欧州・米国・豪州・ニュージーランド・香港の競馬ニュースを3日分だけ確認</p>
+          <p id="subtitle" class="subtitle">欧州・米国・豪州・ニュージーランド・香港の競馬ニュースを3日分だけ確認</p>
         </div>
         <div class="controls" role="search">
           <label class="search-wrap">
@@ -517,6 +674,22 @@
             <input id="searchInput" type="search" placeholder="見出し・媒体名・地域・サイトで検索" autocomplete="off">
           </label>
           <button id="refreshButton" type="button">更新</button>
+          <details id="settingsDetails" class="settings-dropdown">
+            <summary class="settings-summary">
+              <span>設定</span>
+              <span id="currentSettingsLabel" class="settings-current">3日以内 / ライト</span>
+            </summary>
+            <div class="settings-menu" aria-label="表示設定">
+              <label class="toggle-row">
+                <span>ダークモード</span>
+                <input id="darkModeToggle" type="checkbox" role="switch" aria-label="ダークモード">
+              </label>
+              <div class="setting-group">
+                <div class="setting-label">取得対象の日数</div>
+                <div id="daysOptions" class="segmented-control" role="group" aria-label="取得対象の日数"></div>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
     </header>
@@ -561,11 +734,14 @@
     // ===== カスタマイズ用設定 =====
     const CONFIG = {
       DAYS_BACK: 3,
+      MIN_DAYS_BACK: 1,
+      MAX_DAYS_BACK: 3,
       REQUEST_TIMEOUT_MS: 12000,
       MAX_ITEMS_PER_SITE: 18,
       ALLOW_UNDATED_LATEST_ITEMS: false,
       UNDATED_ITEMS_PER_SITE: 0,
       CACHE_KEY: "international-horse-racing-news-portal-cache-v1",
+      SETTINGS_KEY: "international-horse-racing-news-portal-settings-v1",
       FALLBACK_THUMBNAIL:
         "data:image/svg+xml;charset=UTF-8," +
         encodeURIComponent(
@@ -624,16 +800,23 @@
     const state = {
       allItems: [],
       errors: [],
-      siteNotes: [],
+      siteLatest: {},
       lastUpdatedAt: null,
       isLoading: false,
       activeRegion: "all",
-      activeSite: "all"
+      activeSite: "all",
+      activeDaysBack: CONFIG.DAYS_BACK,
+      darkMode: false
     };
 
     const elements = {
+      subtitle: document.querySelector("#subtitle"),
       refreshButton: document.querySelector("#refreshButton"),
       searchInput: document.querySelector("#searchInput"),
+      settingsDetails: document.querySelector("#settingsDetails"),
+      currentSettingsLabel: document.querySelector("#currentSettingsLabel"),
+      darkModeToggle: document.querySelector("#darkModeToggle"),
+      daysOptions: document.querySelector("#daysOptions"),
       currentFilterLabel: document.querySelector("#currentFilterLabel"),
       regionTabs: document.querySelector("#regionTabs"),
       siteTabs: document.querySelector("#siteTabs"),
@@ -646,6 +829,23 @@
 
     elements.refreshButton.addEventListener("click", refreshAll);
     elements.searchInput.addEventListener("input", render);
+    elements.darkModeToggle.addEventListener("change", () => {
+      // チェックボックスは見た目だけでなく状態の正本として使い、変更直後にlocalStorageへ保存する。
+      state.darkMode = elements.darkModeToggle.checked;
+      saveSettings();
+      applyTheme();
+      renderSettings();
+    });
+    elements.daysOptions.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-days]");
+      if (!button) return;
+
+      // data-daysはHTML属性なので文字列で来る。範囲外値が混ざっても1〜3日に丸めて扱う。
+      state.activeDaysBack = clampDaysBack(button.dataset.days);
+      saveSettings();
+      render();
+      setStatus("設定変更", `${state.activeDaysBack}日以内の記事だけを表示しています。必要なら更新で再取得できます。`);
+    });
     elements.regionTabs.addEventListener("click", (event) => {
       const button = event.target.closest("[data-region]");
       if (!button) return;
@@ -669,6 +869,8 @@
 
     // 初期表示時にキャッシュを復元し、現在の条件で画面を描画する。
     function boot() {
+      loadSettings();
+      applyTheme();
       loadCache();
       render();
     }
@@ -677,8 +879,8 @@
     async function refreshAll() {
       state.isLoading = true;
       state.errors = [];
-      state.siteNotes = [];
-      setStatus("取得中", `${CONFIG.SITES.length}サイトからヘッドラインを取得しています。`);
+      state.siteLatest = {};
+      setStatus("取得中", `${CONFIG.SITES.length}サイトからヘッドラインを取得しています。表示対象は${state.activeDaysBack}日以内です。`);
       elements.refreshButton.disabled = true;
       elements.refreshButton.textContent = "更新中";
       renderErrors();
@@ -695,14 +897,13 @@
           // 後で「取得は成功したが最新が古い」媒体を注記するため。
           fetchedItems.push(...result.value);
 
-          // 取得自体は成功しているが、3日以内の記事が1件もないサイトはエラーではなく注記として残す。
-          const freshItems = result.value.filter(isWithinWindow);
-          if (result.value.length > 0 && freshItems.length === 0) {
+          if (result.value.length > 0) {
+            // 表示期間を1〜3日で切り替えても注記を再計算できるよう、媒体ごとの最新検出日だけ保存する。
+            // 古い記事しかない媒体も「取得失敗」ではなく「期間内の記事なし」と説明できる。
             const latestItem = result.value.reduce((latest, item) => !latest || item.publishedAt > latest.publishedAt ? item : latest, null);
-            state.siteNotes.push({
-              site: site.name,
-              message: `${CONFIG.DAYS_BACK}日以内の記事がありません（最新検出: ${latestItem ? formatDateTime(latestItem.publishedAt) : "日時不明"}）`
-            });
+            if (latestItem && latestItem.publishedAt) {
+              state.siteLatest[site.id] = latestItem.publishedAt.toISOString();
+            }
           }
         } else {
           state.errors.push({
@@ -713,8 +914,8 @@
       });
 
       const merged = dedupeByUrl(fetchedItems)
-        // 最後に3日以内の条件を適用する。CONFIG.DAYS_BACKを変えるだけで表示期間を調整できる。
-        .filter(isWithinWindow)
+        // キャッシュには最大3日分を残す。表示だけをstate.activeDaysBackで絞ることで、1日→3日への切替でも再取得を必須にしない。
+        .filter(isWithinMaxWindow)
         // 表示は常に新着順。各媒体側の並びが壊れていてもここで揃える。
         .sort((a, b) => b.publishedAt - a.publishedAt);
 
@@ -730,8 +931,11 @@
       elements.refreshButton.disabled = false;
       elements.refreshButton.textContent = "更新";
 
-      if (merged.length > 0) {
-        setStatus("更新完了", `${merged.length}件を表示しています。`);
+      const visibleCount = getDateScopedItems().length;
+      if (visibleCount > 0) {
+        setStatus("更新完了", `${state.activeDaysBack}日以内の${visibleCount}件を表示しています。`);
+      } else if (merged.length > 0) {
+        setStatus("期間内記事なし", `取得は完了しましたが、${state.activeDaysBack}日以内に表示できる記事はありません。`);
       } else if (state.allItems.length > 0) {
         setStatus("取得失敗", "新しい取得結果がないため、前回キャッシュを表示しています。");
       } else {
@@ -1985,10 +2189,21 @@
       return new Date(Date.now() - index * 20 * 60 * 1000);
     }
 
-    // 設定された取得日数内の記事だけを残す。
+    // 現在の表示設定で指定された日数内の記事だけを残す。
     function isWithinWindow(item) {
+      return isWithinDays(item, state.activeDaysBack);
+    }
+
+    // キャッシュ保持用として、設定メニューで選べる最大日数内の記事だけを残す。
+    function isWithinMaxWindow(item) {
+      return isWithinDays(item, CONFIG.MAX_DAYS_BACK);
+    }
+
+    // 指定した日数内の記事かどうかを共通判定する。
+    function isWithinDays(item, daysBack) {
       const now = new Date();
-      const cutoff = now.getTime() - CONFIG.DAYS_BACK * 24 * 60 * 60 * 1000;
+      const cutoff = now.getTime() - daysBack * 24 * 60 * 60 * 1000;
+      // 少し未来の時刻は、海外サイトのタイムゾーン差やJST変換の揺れを吸収するため12時間まで許容する。
       return item.publishedAt.getTime() >= cutoff && item.publishedAt.getTime() <= now.getTime() + 12 * 60 * 60 * 1000;
     }
 
@@ -2115,6 +2330,9 @@
     function render() {
       const filtered = getFilteredItems();
 
+      // 設定メニューは取得結果とは独立しているため、表示再描画のたびに現在状態をボタンへ反映する。
+      renderSettings();
+
       // 絞り込みの要約はプルダウンを閉じた状態でも見えるため、一覧より先に更新する。
       renderCurrentFilterLabel(filtered);
 
@@ -2135,15 +2353,34 @@
         const siteText = state.activeSite === "all" ? "全サイト" : getSiteLabel(state.activeSite);
         const filterText = `${regionText} / ${siteText}`;
         const lastUpdated = state.lastUpdatedAt ? `最終更新: ${formatDateTime(state.lastUpdatedAt)}` : "未更新";
-        const suffix = query ? `${filterText}の検索結果 ${filtered.length}件 / 全${state.allItems.length}件` : `${filterText} 表示 ${filtered.length}件`;
+        const dateScopedCount = getDateScopedItems().length;
+        const suffix = query ? `${filterText}の検索結果 ${filtered.length}件 / ${state.activeDaysBack}日以内の全${dateScopedCount}件` : `${filterText} 表示 ${filtered.length}件`;
         if (state.errors.length > 0 && state.allItems.length === 0) {
           setStatus("取得失敗", "表示できるヘッドラインを取得できませんでした。");
         } else if (state.errors.length > 0) {
           setStatus("一部取得失敗", `${suffix}。${lastUpdated}`);
+        } else if (dateScopedCount === 0 && state.allItems.length > 0) {
+          setStatus("期間内記事なし", `${state.activeDaysBack}日以内の記事はありません。日数を広げるか更新してください。`);
         } else {
           setStatus(state.allItems.length ? "表示中" : "待機中", `${suffix}。${lastUpdated}`);
         }
       }
+    }
+
+    // 設定メニュー内の日数ボタン、ダークモード表示、サブタイトルを現在状態に合わせる。
+    function renderSettings() {
+      elements.darkModeToggle.checked = state.darkMode;
+      elements.currentSettingsLabel.textContent = `${state.activeDaysBack}日以内 / ${state.darkMode ? "ダーク" : "ライト"}`;
+      elements.subtitle.textContent = `欧州・米国・豪州・ニュージーランド・香港の競馬ニュースを${state.activeDaysBack}日分だけ確認`;
+
+      // ボタンを毎回作り直すことで、CONFIG.MIN_DAYS_BACK/MAX_DAYS_BACKを変えた場合もUIが自動追従する。
+      const options = [];
+      for (let day = CONFIG.MIN_DAYS_BACK; day <= CONFIG.MAX_DAYS_BACK; day += 1) {
+        const active = day === state.activeDaysBack ? " is-active" : "";
+        const pressed = day === state.activeDaysBack ? "true" : "false";
+        options.push(`<button class="day-option${active}" type="button" data-days="${day}" aria-pressed="${pressed}">${day}日以内</button>`);
+      }
+      elements.daysOptions.innerHTML = options.join("");
     }
 
     // 閉じたプルダウン上に、現在選択中の地域・サイト・表示件数を短く表示する。
@@ -2170,9 +2407,14 @@
         });
     }
 
+    // 最大3日分キャッシュから、現在の取得対象日数に入る記事だけを取り出す。
+    function getDateScopedItems() {
+      return state.allItems.filter(isWithinWindow);
+    }
+
     // サイトフィルタの前段階として、選択中地域に属するニュースだけを返す。
     function getRegionScopedItems() {
-      return state.allItems.filter((item) => state.activeRegion === "all" || item.region === state.activeRegion);
+      return getDateScopedItems().filter((item) => state.activeRegion === "all" || item.region === state.activeRegion);
     }
 
     // 地域変更時に、その地域に存在しないサイト選択を全サイトへ戻す。
@@ -2187,8 +2429,9 @@
     // 地域別の件数付きタブを描画する。
     function renderRegionTabs() {
       const counts = new Map(REGION_OPTIONS.map((region) => [region.id, 0]));
-      counts.set("all", state.allItems.length);
-      state.allItems.forEach((item) => {
+      const dateScopedItems = getDateScopedItems();
+      counts.set("all", dateScopedItems.length);
+      dateScopedItems.forEach((item) => {
         // キャッシュ表示時も現在の総件数から地域別件数を再計算する。
         counts.set(item.region, (counts.get(item.region) || 0) + 1);
       });
@@ -2295,11 +2538,12 @@
         .join("") || `<span class="chip">該当サイト <span>0</span></span>`;
     }
 
-    // 取得失敗サイトと理由をステータス領域に表示する。
+    // 取得失敗サイト、期間内記事なし、画像なし件数などをステータス領域に表示する。
     function renderErrors() {
       const messages = [
         ...state.errors.map((error) => ({ type: "error", site: error.site, message: error.message })),
-        ...state.siteNotes.map((note) => ({ type: "note", site: note.site, message: note.message }))
+        ...buildWindowNotes(),
+        ...buildImageNotes()
       ];
 
       if (messages.length === 0) {
@@ -2311,11 +2555,44 @@
       elements.errorList.classList.add("is-visible");
       elements.errorList.innerHTML = messages
         .map((entry) => {
-          // エラーと「取得できたが3日以内なし」の注記を同じ場所に出し、0件の理由を見失わないようにする。
-          const prefix = entry.type === "note" ? "注記" : "エラー";
+          // エラーと注記を同じ場所に出し、0件・画像なし・プロキシ失敗の理由を見失わないようにする。
+          const prefix = entry.type === "error" ? "エラー" : "注記";
           return `<div>${escapeHtml(prefix)} ${escapeHtml(entry.site)}: ${escapeHtml(entry.message)}</div>`;
         })
         .join("");
+    }
+
+    // 取得はできたが現在の表示日数内に記事が無い媒体を、媒体ごとの最新検出日から説明する。
+    function buildWindowNotes() {
+      const visibleBySite = new Set(getDateScopedItems().map((item) => item.sourceId));
+
+      return CONFIG.SITES.map((site) => {
+        if (visibleBySite.has(site.id)) return null;
+        const latestIso = state.siteLatest[site.id];
+        if (!latestIso) return null;
+
+        const latestDate = new Date(latestIso);
+        if (Number.isNaN(latestDate.getTime())) return null;
+
+        return {
+          type: "note",
+          site: site.name,
+          message: `${state.activeDaysBack}日以内の記事がありません（最新検出: ${formatDateTime(latestDate)}）`
+        };
+      }).filter(Boolean);
+    }
+
+    // 画像が取得できずダミー表示になっている件数を、必要な場合だけ注記として表示する。
+    function buildImageNotes() {
+      const dateScopedItems = getDateScopedItems();
+      const fallbackCount = dateScopedItems.filter((item) => item.thumbnail === CONFIG.FALLBACK_THUMBNAIL).length;
+      if (fallbackCount === 0) return [];
+
+      return [{
+        type: "note",
+        site: "サムネイル",
+        message: `${fallbackCount}件は画像が見つからないためダミー画像で表示しています`
+      }];
     }
 
     // 取得中・表示中・失敗などの現在状態を画面上部に表示する。
@@ -2346,6 +2623,50 @@
       return site ? site.name : siteId;
     }
 
+    // 日数設定を1〜3日の許容範囲へ丸める。
+    function clampDaysBack(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return CONFIG.DAYS_BACK;
+      return Math.min(CONFIG.MAX_DAYS_BACK, Math.max(CONFIG.MIN_DAYS_BACK, Math.round(parsed)));
+    }
+
+    // 保存済みの表示設定を復元する。
+    function loadSettings() {
+      try {
+        const cached = JSON.parse(localStorage.getItem(CONFIG.SETTINGS_KEY) || "null");
+        if (!cached) return;
+
+        // 日数は将来CONFIG範囲を変えた場合にも壊れないよう、読み込み時に必ず丸める。
+        state.activeDaysBack = clampDaysBack(cached.activeDaysBack);
+        state.darkMode = Boolean(cached.darkMode);
+      } catch (_error) {
+        // 設定JSONが壊れていてもニュース表示は止めない。初期値へ戻してそのまま描画する。
+        state.activeDaysBack = CONFIG.DAYS_BACK;
+        state.darkMode = false;
+      }
+    }
+
+    // 表示設定をlocalStorageへ保存する。
+    function saveSettings() {
+      try {
+        localStorage.setItem(
+          CONFIG.SETTINGS_KEY,
+          JSON.stringify({
+            activeDaysBack: state.activeDaysBack,
+            darkMode: state.darkMode
+          })
+        );
+      } catch (_error) {
+        state.errors.push({ site: "localStorage", message: "設定保存に失敗しました" });
+      }
+    }
+
+    // ダークモード設定をbodyクラスへ反映する。
+    function applyTheme() {
+      // 背景色はCSS変数で管理し、body.is-darkのときだけ完全な黒へ切り替える。
+      document.body.classList.toggle("is-dark", state.darkMode);
+    }
+
     // 最後に取得できたニュース一覧をlocalStorageへ保存する。
     function saveCache() {
       try {
@@ -2353,6 +2674,7 @@
           CONFIG.CACHE_KEY,
           JSON.stringify({
             lastUpdatedAt: state.lastUpdatedAt && state.lastUpdatedAt.toISOString(),
+            siteLatest: state.siteLatest,
             allItems: state.allItems.map((item) => ({
               ...item,
               publishedAt: item.publishedAt.toISOString()
@@ -2372,11 +2694,9 @@
 
         state.allItems = cached.allItems
           .map((item) => {
-            const site = CONFIG.SITES.find((entry) => entry.id === item.sourceId) || {
-              id: item.sourceId,
-              baseUrl: item.url,
-              region: item.region
-            };
+            const site = CONFIG.SITES.find((entry) => entry.id === item.sourceId);
+            // 取得対象から削除した媒体（例: news.com.au）は、古いキャッシュに残っていても表示へ戻さない。
+            if (!site) return null;
             return {
               ...item,
               region: item.region || site.region,
@@ -2385,12 +2705,15 @@
               thumbnail: resolveThumbnail(item.thumbnail, site, item.url)
             };
           })
+          .filter(Boolean)
           .filter((item) => !Number.isNaN(item.publishedAt.getTime()))
-          .filter(isWithinWindow)
+          .filter(isWithinMaxWindow)
           .sort((a, b) => b.publishedAt - a.publishedAt);
+        state.siteLatest = cached.siteLatest && typeof cached.siteLatest === "object" ? cached.siteLatest : {};
         state.lastUpdatedAt = cached.lastUpdatedAt ? new Date(cached.lastUpdatedAt) : null;
       } catch (_error) {
         state.allItems = [];
+        state.siteLatest = {};
         state.lastUpdatedAt = null;
       }
     }
