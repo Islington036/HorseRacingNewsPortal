@@ -192,7 +192,10 @@ const state = {
 
       const visibleCount = getDateScopedItems().length;
       if (visibleCount > 0) {
-        setStatus(t("completedStatus"), t("completedMessage", { days: state.activeDaysBack, count: visibleCount }));
+        setStatus(
+          state.errors.length > 0 ? t("partialFailedStatus") : t("completedStatus"),
+          t("completedMessage", { days: state.activeDaysBack, count: visibleCount })
+        );
       } else if (merged.length > 0) {
         setStatus(t("noWindowStatus"), t("noWindowAfterFetch", { days: state.activeDaysBack }));
       } else if (state.allItems.length > 0) {
