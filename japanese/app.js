@@ -107,7 +107,9 @@ const state = {
       elements.refreshButton.disabled = true;
       elements.refreshButton.textContent = t("refreshing");
       renderErrors();
-      const previousItemIds = new Set(state.allItems.map((item) => item.id));
+      const previousItems = state.allItems;
+      const previousItemIds = new Set(previousItems.map((item) => item.id));
+      const failedSiteIds = new Set();
 
       // 各媒体は独立しているため、1サイトの失敗で全体表示を止めないようallSettledで並列取得する。
       const results = await Promise.allSettled(CONFIG.SITES.map(fetchSite));
@@ -125,6 +127,8 @@ const state = {
             }
           }
         } else {
+          // タイムアウトや一時的なプロキシ制限で失敗した媒体は、あとで前回キャッシュを残すためIDを控える。
+          failedSiteIds.add(site.id);
           state.errors.push({
             site: site.name,
             message: result.reason && result.reason.message ? result.reason.message : String(result.reason)
@@ -132,15 +136,19 @@ const state = {
         }
       });
 
-      const merged = dedupeByUrl(fetchedItems)
+      const preservedFailedItems = getPreservedItemsForFailedSites(previousItems, failedSiteIds);
+      const merged = dedupeByUrl([...fetchedItems, ...preservedFailedItems])
         .filter(isWithinMaxWindow)
         .sort((a, b) => b.publishedAt - a.publishedAt);
 
-      if (merged.length > 0) {
+      if (fetchedItems.length > 0 && merged.length > 0) {
         state.allItems = merged;
         markItemsForAnimation(merged, previousItemIds);
         state.lastUpdatedAt = new Date();
         saveCache();
+      } else if (merged.length > 0) {
+        // 全サイト失敗時は「更新できた」と誤表示しないよう、時刻とキャッシュ保存は触らず前回表示だけ維持する。
+        state.allItems = merged;
       }
 
       state.isLoading = false;
@@ -159,6 +167,14 @@ const state = {
       }
 
       render();
+    }
+
+    function getPreservedItemsForFailedSites(previousItems, failedSiteIds) {
+      if (!failedSiteIds.size) return [];
+
+      // 部分失敗時に失敗媒体の記事だけ消えると、ユーザーには「記事がなくなった」ように見える。
+      // そのため、成功媒体は新データへ差し替えつつ、失敗媒体だけ前回取得分を混ぜて一覧の連続性を保つ。
+      return previousItems.filter((item) => failedSiteIds.has(item.sourceId));
     }
 
     function markItemsForAnimation(items, previousItemIds) {
