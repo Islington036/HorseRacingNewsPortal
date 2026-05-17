@@ -513,17 +513,23 @@
     }
 
     .news-card.is-new {
-      animation: card-appear 420ms ease both;
+      animation: card-flow-up 560ms cubic-bezier(0.18, 0.82, 0.24, 1) both;
       animation-delay: var(--appear-delay, 0ms);
+      will-change: opacity, transform;
     }
 
-    @keyframes card-appear {
-      from {
+    @keyframes card-flow-up {
+      0% {
         opacity: 0;
-        transform: translateY(10px);
+        transform: translateY(42px);
       }
 
-      to {
+      72% {
+        opacity: 1;
+        transform: translateY(-3px);
+      }
+
+      100% {
         opacity: 1;
         transform: translateY(0);
       }
