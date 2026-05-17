@@ -37,7 +37,7 @@
           baseUrl: "https://www.nikkansports.com",
           parser: "nikkan",
           hydrateTruncatedTitles: true,
-          titleHydrationLimit: 8
+          titleHydrationLimit: 30
         },
         {
           id: "tospo",
