@@ -14,7 +14,8 @@ const state = {
       darkMode: false,
       language: "ja",
       refreshRunId: 0,
-      animatedItemIds: new Set()
+      animatedItemIds: new Set(),
+      animationClearTimer: null
     };
 
     const elements = {
@@ -128,6 +129,7 @@ const state = {
       renderErrors();
 
       const previousItems = state.allItems;
+      const previousItemIds = new Set(previousItems.map((item) => item.id));
       const completedSiteIds = new Set();
       const fetchedItemsBySite = new Map();
       let completedCount = 0;
@@ -141,7 +143,7 @@ const state = {
           completedCount += 1;
           completedSiteIds.add(site.id);
           fetchedItemsBySite.set(site.id, items);
-          markItemsForAnimation(items);
+          markItemsForAnimation(items, previousItemIds);
           updateSiteLatest(site, items);
           renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite);
           setStatus(t("loadingStatus"), t("loadingProgress", {
@@ -230,10 +232,12 @@ const state = {
         .sort((a, b) => b.publishedAt - a.publishedAt);
     }
 
-    // 取得が完了した媒体のカードへ、次回描画だけアニメーション用クラスを付ける。
-    function markItemsForAnimation(items) {
+    // 今回の更新で初めて見つかった記事だけ、次回描画時に下から流れ込むアニメーションを付ける。
+    function markItemsForAnimation(items, previousItemIds) {
       items.forEach((item) => {
-        if (item && item.id) state.animatedItemIds.add(item.id);
+        if (item && item.id && !previousItemIds.has(item.id)) {
+          state.animatedItemIds.add(item.id);
+        }
       });
     }
 
@@ -2006,7 +2010,7 @@ const state = {
       // カードHTMLをまとめて差し替えた後、imgのerrorハンドラを張り直す。
       elements.newsList.innerHTML = filtered.map((item, index) => renderCard(item, index)).join("");
       attachThumbnailFallbacks();
-      state.animatedItemIds.clear();
+      scheduleAnimationCleanup();
       elements.emptyState.classList.toggle("is-visible", filtered.length === 0);
 
       if (!state.isLoading) {
@@ -2191,6 +2195,26 @@ const state = {
     // 画像がない記事向けのダミーサムネイル要素を返す。
     function renderFallbackThumbnail() {
       return `<div class="thumb thumb-fallback" aria-hidden="true">${escapeHtml(t("noImage"))}</div>`;
+    }
+
+    // 再描画直後にアニメーション用クラスを消すと、速い取得では動きが見えない。
+    // CSSアニメーションが終わる少し後に状態とDOMクラスを片付け、次回更新で誤って再アニメーションしないようにする。
+    function scheduleAnimationCleanup() {
+      if (state.animationClearTimer) {
+        window.clearTimeout(state.animationClearTimer);
+        state.animationClearTimer = null;
+      }
+
+      if (state.animatedItemIds.size === 0) return;
+
+      state.animationClearTimer = window.setTimeout(() => {
+        state.animatedItemIds.clear();
+        state.animationClearTimer = null;
+        elements.newsList.querySelectorAll(".news-card.is-new").forEach((card) => {
+          card.classList.remove("is-new");
+          card.style.removeProperty("--appear-delay");
+        });
+      }, 900);
     }
 
     // 画像読み込み失敗時に、壊れたimgをダミーサムネイルへ差し替える。
