@@ -769,7 +769,7 @@
         { id: "racingpost_bloodstock", name: "Racing Post Bloodstock", region: "europe", url: "https://www.racingpost.com/bloodstock/", baseUrl: "https://www.racingpost.com", parser: "generic", pathHints: ["/bloodstock/"] },
         { id: "attheraces", name: "At The Races", region: "europe", url: "https://www.attheraces.com/news", baseUrl: "https://www.attheraces.com", parser: "generic", pathHints: ["/news"], preferTextProxy: true },
         { id: "racingtv", name: "Racing TV", region: "europe", url: "https://www.racingtv.com/news/latest", apiUrl: "https://api.racingtv.com/news/articles/latest?pagination%5Bpage%5D=1", baseUrl: "https://www.racingtv.com", parser: "generic", pathHints: ["/news"], preferTextProxy: false, tryDirect: true, requestHeaders: { Accept: "application/json", "X-Requested-With": "racingtv-web/1.0.0" } },
-        { id: "irishracing", name: "Irish Racing", region: "europe", url: "https://www.irishracing.com/news", baseUrl: "https://www.irishracing.com", parser: "generic", pathHints: ["/news"], preferTextProxy: true },
+        { id: "irishracing", name: "Irish Racing", region: "europe", url: "https://www.irishracing.com/news", baseUrl: "https://www.irishracing.com", parser: "generic", pathHints: ["/news"], preferTextProxy: false },
         { id: "dailymail_racing", name: "Daily Mail Racing", region: "europe", url: "https://www.dailymail.com/sport/racing/index.html", feedUrl: "https://www.dailymail.com/sport/racing/index.rss", baseUrl: "https://www.dailymail.com", parser: "generic", pathHints: ["/sport/racing/article-"], allowedHosts: ["dailymail.co.uk"], preferTextProxy: true, tryDirect: true },
         { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", feedUrl: "https://www.mirror.co.uk/sport/horse-racing/?service=rss", baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], preferTextProxy: true },
         { id: "sportinglife_features", name: "Sporting Life Racing", region: "europe", url: "https://www.sportinglife.com/racing/features", baseUrl: "https://www.sportinglife.com", parser: "generic", pathHints: ["/racing/news/", "/racing/features/"], preferTextProxy: true },
@@ -1107,7 +1107,7 @@
       if (site.id === "racingtv") return [...extractRacingTvApiItems(data, site), ...extractRacingTvMarkdownItems(rawText, site)];
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
       // 専用抽出で漏れた記事はPARSERS.generic側のJSON-LD/Feed/Markdown/カード抽出が引き続き拾う。
-      if (site.id === "irishracing") return extractIrishRacingItems(doc, site);
+      if (site.id === "irishracing") return [...extractIrishRacingItems(doc, site), ...extractIrishRacingMarkdownItems(rawText, site)];
       if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
@@ -1231,9 +1231,15 @@
     function extractIrishRacingItems(doc, site) {
       const items = [];
 
-      doc.querySelectorAll(".main-news-item, .news-item").forEach((card) => {
-        const anchor = card.closest("a[href]") || card.querySelector("a[href]");
-        const title = textOf(card, "h2, h3, h4");
+      doc.querySelectorAll("#news-panel .main-news-item, #news-panel .news-item, .main-news-item, .news-item").forEach((card) => {
+        // Irish RacingのHTMLはカード全体がリンクに包まれる形と、カード内にリンクがある形が混在する。
+        // /news/ を含むURLを優先して、ヘッダーや広告リンクを記事として拾わないようにする。
+        const anchor =
+          card.closest("a[href*='/news/']") ||
+          card.querySelector("a[href*='/news/']") ||
+          card.closest("a[href]") ||
+          card.querySelector("a[href]");
+        const title = cleanTitle(textOf(card, "h2, h3, h4"));
         const dateHeader = findIrishRacingDateHeader(card);
         const timeText = normalizeClockText(textOf(card, ".news-stamp"));
         const image = attrOf(card, "img.news-photo, img", "src");
@@ -1243,13 +1249,64 @@
         items.push({
           title,
           url: anchor.getAttribute("href"),
-          publishedAt: parseDate(`${dateHeader} ${timeText}`),
+          publishedAt: parseIrishRacingDateTime(dateHeader, timeText),
           thumbnail: image,
           source: site.name
         });
       });
 
       return items;
+    }
+
+    // Irish RacingのJina Reader Markdownから、日付見出し・記事見出し・時刻を組み合わせて抽出する。
+    function extractIrishRacingMarkdownItems(text, site) {
+      if (!text) return [];
+
+      const lines = String(text).split(/\r?\n/).map((line) => line.trim());
+      const items = [];
+      let currentDateHeader = "";
+      let lastImage = "";
+
+      lines.forEach((line, index) => {
+        // Jinaでは「Sat 16th May 2026」のような日付行が先に出て、その下に同日記事が並ぶ。
+        if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+20\d{2}$/i.test(line)) {
+          currentDateHeader = line;
+          lastImage = "";
+          return;
+        }
+
+        // 画像リンクは見出し行より前に出ることがあるため、直近画像として一時保存する。
+        const imageMatch = line.match(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/);
+        if (imageMatch) lastImage = imageMatch[1];
+
+        const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)/i);
+        if (!heading || !currentDateHeader) return;
+
+        // 時刻は見出しの直後に出る場合と、短い本文を挟んで出る場合があるため、近傍だけを限定探索する。
+        const timeText = findIrishRacingMarkdownTime(lines, index);
+        const publishedAt = parseIrishRacingDateTime(currentDateHeader, timeText);
+        if (!publishedAt) return;
+
+        items.push({
+          title: cleanTitle(heading[1]),
+          url: heading[2],
+          publishedAt,
+          thumbnail: lastImage,
+          source: site.name
+        });
+      });
+
+      return items;
+    }
+
+    // Irish Racing Markdown内で、記事見出しに紐づく時刻表記を近傍から探す。
+    function findIrishRacingMarkdownTime(lines, index) {
+      for (let offset = 0; offset <= 6; offset += 1) {
+        const line = lines[index + offset] || "";
+        const match = line.match(/\b\d{1,2}\.\d{2}\s*(?:AM|PM)\b/i);
+        if (match) return normalizeClockText(match[0]);
+      }
+      return "";
     }
 
     // Irish Racingで記事カードの直前にある日付見出しをさかのぼって探す。
@@ -1263,6 +1320,14 @@
       }
 
       return "";
+    }
+
+    // Irish Racing専用の日付見出しと時刻を結合し、Dateへ変換する。
+    function parseIrishRacingDateTime(dateHeader, timeText) {
+      if (!dateHeader || !timeText) return null;
+      // dateHeaderは「Sat 16th May 2026」、timeTextは「6:08 PM」へ正規化済みの想定。
+      // parseDate側で曜日と序数サフィックスを処理できるため、ここでは結合だけに留める。
+      return parseDate(`${dateHeader} ${normalizeClockText(timeText)}`);
     }
 
     // 12.30 PMのような時刻表記を、Date解析しやすい形式へ整える。
