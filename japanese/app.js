@@ -472,6 +472,9 @@ const state = {
         // 省略記号のない見出しは一覧側のタイトルをそのまま信頼する。
         // 省略見出しだけに絞ることで、記事ページへの追加アクセスを必要最小限にする。
         .filter((item) => isTruncatedTitle(item.title))
+        // 日刊スポーツのように同じ一覧内に重複セクションやランキング枠が混ざる媒体では、
+        // DOMに出てきた順番とポータル上の表示順が一致しない。画面に出やすい新しい記事から補完する。
+        .sort((a, b) => b.publishedAt - a.publishedAt)
         .slice(0, limit);
 
       if (targets.length === 0) return items;
