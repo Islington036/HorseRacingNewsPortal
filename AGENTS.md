@@ -4,7 +4,7 @@
 - 個人利用向けの競馬ニュース早見ポータルです。
 - `japanese/` は日本競馬ニュース用です。
 - `international/` は海外競馬ニュース用です。
-- 旧単一HTML（`JapaneseHorseRacingNewsPortal.html`、`InternationalHorseRacingNewsPortal.html`）は移行前の参照用として残っています。
+- ルートの `JapaneseHorseRacingNewsPortal.html`、`InternationalHorseRacingNewsPortal.html` は新フォルダ版への案内ページです。
 - 外部サイト取得はブラウザの `fetch` と設定済みCORSプロキシ/Jina Readerを経由します。
 
 ## 編集方針
