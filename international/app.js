@@ -355,6 +355,7 @@ const state = {
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
       if (site.id === "thestraight") return extractTheStraightApiItems(data, site);
       if (site.id === "bloodhorse") return extractBloodHorseItems(doc, site);
+      if (site.id === "racing_com") return extractRacingComMarkdownItems(rawText, site);
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
       return [];
     }
@@ -876,6 +877,73 @@ const state = {
       const slugWords = fromSlug.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
       const matchedWords = slugWords.filter((word) => bodyPrefix.includes(word)).length;
       return matchedWords >= Math.min(4, slugWords.length) ? fromSlug : cleanTitle(body);
+    }
+
+    // Racing.comのJina Reader出力から、実写真・見出し・相対時刻・記事URLを1カードとして抽出する。
+    function extractRacingComMarkdownItems(text, site) {
+      if (!text) return [];
+
+      const lines = String(text).split(/\r?\n/).map((line) => line.trim());
+      const items = [];
+
+      lines.forEach((line, index) => {
+        const heading = line.match(/^#{3,5}\s+(.+)$/);
+        if (!heading) return;
+
+        // Racing.comのカードは「画像」「ブランドアイコン」「見出し」「カテゴリ」「時刻」「空リンク」の順で並ぶ。
+        // 汎用Markdown抽出だとブランドアイコンをサムネイル扱いしやすいため、ここで実写真だけを先に結び付ける。
+        const title = cleanTitle(heading[1]);
+        const url = findRacingComArticleLinkAfter(lines, index, site);
+        const publishedAt = findRacingComDateAfter(lines, index, url);
+        const thumbnail = findRacingComImageBefore(lines, index);
+
+        if (!isLikelyHeadline(title) || !url || !publishedAt || !isCandidateArticleUrl(url, site)) return;
+
+        items.push({
+          title,
+          url,
+          publishedAt,
+          thumbnail,
+          source: site.name
+        });
+      });
+
+      return items;
+    }
+
+    // Racing.comの見出し直後に出る空リンク形式の記事URLを探す。
+    function findRacingComArticleLinkAfter(lines, index, site) {
+      for (let offset = 1; offset <= 10; offset += 1) {
+        const line = lines[index + offset] || "";
+        const links = [...line.matchAll(/\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)].map((match) => match[1]);
+        const candidate = links.find((link) => isCandidateArticleUrl(link, site));
+        if (candidate) return candidate;
+      }
+      return "";
+    }
+
+    // Racing.comの「JUST NOW」「21 MINS AGO」など、見出し近傍の相対時刻をDateへ変換する。
+    function findRacingComDateAfter(lines, index, url) {
+      for (let offset = 1; offset <= 8; offset += 1) {
+        const line = lines[index + offset] || "";
+        if (/^just now$/i.test(line)) return new Date();
+        const parsed = parseDateFromText(line);
+        if (parsed) return parsed;
+      }
+      return parseDateFromUrl(url);
+    }
+
+    // Racing.comの見出し直前にある実写真を探し、赤いブランドアイコンやナビロゴは除外する。
+    function findRacingComImageBefore(lines, index) {
+      for (let offset = -1; offset >= -8; offset -= 1) {
+        const line = lines[index + offset] || "";
+        if (/^#{3,5}\s+/.test(line)) break;
+
+        const images = [...line.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)].map((match) => match[1]);
+        const candidate = images.find((image) => isUsableImageValue(image));
+        if (candidate) return candidate;
+      }
+      return "";
     }
 
     // RSS/Atomフィードから記事タイトル、URL、公開日時、メディア画像を抽出する。
@@ -1466,7 +1534,7 @@ const state = {
       // JinaやNext.jsの変換URLでは、実画像URLがクエリ内にエンコードされることがある。
       // 元文字列とデコード後の両方を調べ、サイト装飾SVG・ロゴ・アイコンをニュース写真として使わない。
       const target = `${url} ${decodedUrl}`;
-      return !/blank\.gif|spacer\.gif|transparent|no[-_]?image|dummy|placeholder|default[-_]?image|avatar|author|\/icons?\/|\/svgs?\/|\.svg(?:[?#&\s]|$)|logo|favicon|sprite|pixel|tracking|padlock|lock_|chevron|time_solid|search[-_]?icon|menu[-_]?icon|profile[-_]?icon|star[-_]?icon|open_in_new_window|bookmakers?\/circle|\/janus\/bookmakers\/|initials?|monogram|letter[-_]?avatar|data:image\/gif/i.test(target);
+      return !/blank\.gif|spacer\.gif|transparent|no[-_]?image|dummy|placeholder|default[-_]?image|avatar|author|\/icons?\/|\/svgs?\/|\.svg(?:[?#&\s]|$)|brand[-_]?icon|racing-brand-icon|logo|favicon|sprite|pixel|tracking|padlock|lock_|chevron|time_solid|search[-_]?icon|menu[-_]?icon|profile[-_]?icon|star[-_]?icon|open_in_new_window|bookmakers?\/circle|\/janus\/bookmakers\/|initials?|monogram|letter[-_]?avatar|data:image\/gif/i.test(target);
     }
 
     // URLが対象サイトの記事ページらしいか、ホスト・パス・除外語で判定する。
