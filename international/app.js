@@ -12,7 +12,9 @@ const state = {
       activeSite: "all",
       activeDaysBack: CONFIG.DAYS_BACK,
       darkMode: false,
-      language: "ja"
+      language: "ja",
+      refreshRunId: 0,
+      animatedItemIds: new Set()
     };
 
     const elements = {
@@ -109,49 +111,68 @@ const state = {
       render();
     }
 
-    // 全サイトの取得を並列実行し、成功分だけを時系列に統合して画面へ反映する。
+    // 全サイトの取得を並列実行し、終わった媒体から順に画面へ反映する。
     async function refreshAll() {
+      if (state.isLoading) return;
+
+      // 外部からrefresh()を連打された場合でも、古い取得処理が後から画面を書き換えないよう実行IDを進める。
+      const runId = state.refreshRunId + 1;
+      state.refreshRunId = runId;
       state.isLoading = true;
       state.errors = [];
       state.siteLatest = {};
+      state.animatedItemIds.clear();
       setStatus(t("loadingStatus"), t("loadingMessage", { total: CONFIG.SITES.length, days: state.activeDaysBack }));
       elements.refreshButton.disabled = true;
       elements.refreshButton.textContent = t("refreshing");
       renderErrors();
 
-      // すべての媒体を同時に取得する。1媒体の失敗で全体を止めないためallSettledを使う。
-      const results = await Promise.allSettled(CONFIG.SITES.map(fetchSite));
-      const fetchedItems = [];
+      const previousItems = state.allItems;
+      const completedSiteIds = new Set();
+      const fetchedItemsBySite = new Map();
+      let completedCount = 0;
 
-      results.forEach((result, index) => {
-        // Promise配列はCONFIG.SITESと同じ順番なので、indexで媒体設定に戻せる。
-        const site = CONFIG.SITES[index];
-        if (result.status === "fulfilled") {
-          // ここでは3日以内に絞らず、まず取得できた全候補を集める。
-          // 後で「取得は成功したが最新が古い」媒体を注記するため。
-          fetchedItems.push(...result.value);
+      // 通信は従来どおり並列に始めるが、Promise.allSettledで最後まで待たず、各Promiseの完了時点で画面へ反映する。
+      const tasks = CONFIG.SITES.map(async (site) => {
+        try {
+          const items = await fetchSite(site);
+          if (runId !== state.refreshRunId) return;
 
-          if (result.value.length > 0) {
-            // 表示期間を1〜3日で切り替えても注記を再計算できるよう、媒体ごとの最新検出日だけ保存する。
-            // 古い記事しかない媒体も「取得失敗」ではなく「期間内の記事なし」と説明できる。
-            const latestItem = result.value.reduce((latest, item) => !latest || item.publishedAt > latest.publishedAt ? item : latest, null);
-            if (latestItem && latestItem.publishedAt) {
-              state.siteLatest[site.id] = latestItem.publishedAt.toISOString();
-            }
-          }
-        } else {
+          completedCount += 1;
+          completedSiteIds.add(site.id);
+          fetchedItemsBySite.set(site.id, items);
+          markItemsForAnimation(items);
+          updateSiteLatest(site, items);
+          renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite);
+          setStatus(t("loadingStatus"), t("loadingProgress", {
+            done: completedCount,
+            total: CONFIG.SITES.length,
+            site: site.name,
+            count: items.length
+          }));
+        } catch (error) {
+          if (runId !== state.refreshRunId) return;
+
+          completedCount += 1;
+          completedSiteIds.add(site.id);
           state.errors.push({
             site: site.name,
-            message: result.reason && result.reason.message ? result.reason.message : String(result.reason)
+            message: error && error.message ? error.message : String(error)
           });
+          renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite);
+          setStatus(t("partialFailedStatus"), t("loadingProgressError", {
+            done: completedCount,
+            total: CONFIG.SITES.length,
+            site: site.name
+          }));
         }
       });
 
-      const merged = dedupeByUrl(fetchedItems)
-        // キャッシュには最大3日分を残す。表示だけをstate.activeDaysBackで絞ることで、1日→3日への切替でも再取得を必須にしない。
-        .filter(isWithinMaxWindow)
-        // 表示は常に新着順。各媒体側の並びが壊れていてもここで揃える。
-        .sort((a, b) => b.publishedAt - a.publishedAt);
+      await Promise.all(tasks);
+      if (runId !== state.refreshRunId) return;
+
+      const fetchedItems = collectFetchedItems(fetchedItemsBySite);
+      const merged = buildMergedItems(fetchedItems);
 
       if (merged.length > 0) {
         // 1件でも新規取得できた場合だけキャッシュを更新する。
@@ -159,11 +180,15 @@ const state = {
         state.allItems = merged;
         state.lastUpdatedAt = new Date();
         saveCache();
+      } else {
+        // 全サイト失敗、または取得結果がすべて表示対象外だった場合は、途中表示で消した可能性のある前回キャッシュを戻す。
+        state.allItems = previousItems;
       }
 
       state.isLoading = false;
       elements.refreshButton.disabled = false;
       elements.refreshButton.textContent = t("refresh");
+      render();
 
       const visibleCount = getDateScopedItems().length;
       if (visibleCount > 0) {
@@ -175,8 +200,48 @@ const state = {
       } else {
         setStatus(t("failedStatus"), t("failedNoItems"));
       }
+    }
+
+    // 取得済みサイトの新データと、未完了サイトの旧キャッシュを合わせて途中経過を描画する。
+    function renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite) {
+      const fetchedItems = collectFetchedItems(fetchedItemsBySite);
+      const pendingPreviousItems = previousItems.filter((item) => !completedSiteIds.has(item.sourceId));
+      const partialItems = buildMergedItems([...fetchedItems, ...pendingPreviousItems]);
+
+      if (partialItems.length > 0) {
+        state.allItems = partialItems;
+      }
 
       render();
+    }
+
+    // Map<siteId, items[]> から全記事を平坦化する。Array#flatに頼らず、古めのブラウザでも動く形にする。
+    function collectFetchedItems(fetchedItemsBySite) {
+      return [...fetchedItemsBySite.values()].reduce((items, siteItems) => items.concat(siteItems), []);
+    }
+
+    // キャッシュ・途中表示・最終表示で共通する「3日以内保持」「URL重複排除」「新着順」を一箇所にまとめる。
+    function buildMergedItems(items) {
+      return dedupeByUrl(items)
+        .filter(isWithinMaxWindow)
+        .sort((a, b) => b.publishedAt - a.publishedAt);
+    }
+
+    // 取得が完了した媒体のカードへ、次回描画だけアニメーション用クラスを付ける。
+    function markItemsForAnimation(items) {
+      items.forEach((item) => {
+        if (item && item.id) state.animatedItemIds.add(item.id);
+      });
+    }
+
+    // 「取得成功だが期間内記事なし」を説明する注記用に、媒体ごとの最新検出日時を保存する。
+    function updateSiteLatest(site, items) {
+      if (!items.length) return;
+
+      const latestItem = items.reduce((latest, item) => !latest || item.publishedAt > latest.publishedAt ? item : latest, null);
+      if (latestItem && latestItem.publishedAt) {
+        state.siteLatest[site.id] = latestItem.publishedAt.toISOString();
+      }
     }
 
     // 1サイト分のAPI/RSS/HTML候補を順番に試し、最初に抽出できた記事一覧を返す。
@@ -1936,8 +2001,9 @@ const state = {
       renderErrors();
 
       // カードHTMLをまとめて差し替えた後、imgのerrorハンドラを張り直す。
-      elements.newsList.innerHTML = filtered.map(renderCard).join("");
+      elements.newsList.innerHTML = filtered.map((item, index) => renderCard(item, index)).join("");
       attachThumbnailFallbacks();
+      state.animatedItemIds.clear();
       elements.emptyState.classList.toggle("is-visible", filtered.length === 0);
 
       if (!state.isLoading) {
@@ -2086,11 +2152,14 @@ const state = {
     }
 
     // 1件分のニュースカードHTMLを組み立てる。
-    function renderCard(item) {
+    function renderCard(item, index = 0) {
       const dateText = item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt);
       const dateTitle = item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
+      const isNew = state.animatedItemIds.has(item.id);
+      const className = isNew ? "news-card is-new" : "news-card";
+      const animationStyle = isNew ? ` style="--appear-delay: ${Math.min(index, 10) * 28}ms"` : "";
       return `
-        <a class="news-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
+        <a class="${className}"${animationStyle} href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
           ${renderThumbnail(item)}
           <div class="news-body">
             <h2 class="headline">${escapeHtml(item.title)}</h2>
