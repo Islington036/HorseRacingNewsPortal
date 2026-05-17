@@ -132,6 +132,7 @@ const state = {
       const previousItemIds = new Set(previousItems.map((item) => item.id));
       const completedSiteIds = new Set();
       const fetchedItemsBySite = new Map();
+      const failedSiteIds = new Set();
       let completedCount = 0;
 
       // 通信は従来どおり並列に始めるが、Promise.allSettledで最後まで待たず、各Promiseの完了時点で画面へ反映する。
@@ -145,7 +146,7 @@ const state = {
           fetchedItemsBySite.set(site.id, items);
           markItemsForAnimation(items, previousItemIds);
           updateSiteLatest(site, items);
-          renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite);
+          renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite, failedSiteIds);
           setStatus(t("loadingStatus"), t("loadingProgress", {
             done: completedCount,
             total: CONFIG.SITES.length,
@@ -157,11 +158,13 @@ const state = {
 
           completedCount += 1;
           completedSiteIds.add(site.id);
+          // 一時的な429や抽出失敗の媒体は、途中表示と最終表示で前回分を残すため記録する。
+          failedSiteIds.add(site.id);
           state.errors.push({
             site: site.name,
             message: error && error.message ? error.message : String(error)
           });
-          renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite);
+          renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite, failedSiteIds);
           setStatus(t("partialFailedStatus"), t("loadingProgressError", {
             done: completedCount,
             total: CONFIG.SITES.length,
@@ -174,11 +177,12 @@ const state = {
       if (runId !== state.refreshRunId) return;
 
       const fetchedItems = collectFetchedItems(fetchedItemsBySite);
-      const merged = buildMergedItems(fetchedItems);
+      const preservedFailedItems = getPreservedItemsForFailedSites(previousItems, failedSiteIds);
+      const merged = buildMergedItems([...fetchedItems, ...preservedFailedItems]);
 
-      if (merged.length > 0) {
+      if (fetchedItems.length > 0 && merged.length > 0) {
         // 1件でも新規取得できた場合だけキャッシュを更新する。
-        // 全取得失敗時に前回表示を壊さないため。
+        // 失敗媒体の前回分も混ぜて保存し、次回表示で部分失敗だけを理由に記事が消えないようにする。
         state.allItems = merged;
         state.lastUpdatedAt = new Date();
         saveCache();
@@ -207,10 +211,10 @@ const state = {
       }
     }
 
-    // 取得済みサイトの新データと、未完了サイトの旧キャッシュを合わせて途中経過を描画する。
-    function renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite) {
+    // 取得済みサイトの新データと、未完了または失敗サイトの旧キャッシュを合わせて途中経過を描画する。
+    function renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite, failedSiteIds) {
       const fetchedItems = collectFetchedItems(fetchedItemsBySite);
-      const pendingPreviousItems = previousItems.filter((item) => !completedSiteIds.has(item.sourceId));
+      const pendingPreviousItems = previousItems.filter((item) => !completedSiteIds.has(item.sourceId) || failedSiteIds.has(item.sourceId));
       const partialItems = buildMergedItems([...fetchedItems, ...pendingPreviousItems]);
 
       if (partialItems.length > 0) {
@@ -223,6 +227,15 @@ const state = {
     // Map<siteId, items[]> から全記事を平坦化する。Array#flatに頼らず、古めのブラウザでも動く形にする。
     function collectFetchedItems(fetchedItemsBySite) {
       return [...fetchedItemsBySite.values()].reduce((items, siteItems) => items.concat(siteItems), []);
+    }
+
+    // 取得失敗した媒体だけ前回分を引き継ぐ。成功媒体は最新データに置き換えるため、古い重複を混ぜない。
+    function getPreservedItemsForFailedSites(previousItems, failedSiteIds) {
+      if (!failedSiteIds.size) return [];
+
+      // ニュースサイトや公開プロキシは短時間の連続更新で429/タイムアウトになることがある。
+      // その場合も「失敗した媒体の記事が消えた」と誤解されないよう、媒体単位で前回表示を保持する。
+      return previousItems.filter((item) => failedSiteIds.has(item.sourceId));
     }
 
     // キャッシュ・途中表示・最終表示で共通する「3日以内保持」「URL重複排除」「新着順」を一箇所にまとめる。
