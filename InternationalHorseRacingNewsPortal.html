@@ -770,7 +770,7 @@
         { id: "attheraces", name: "At The Races", region: "europe", url: "https://www.attheraces.com/news", baseUrl: "https://www.attheraces.com", parser: "generic", pathHints: ["/news"], preferTextProxy: true },
         { id: "racingtv", name: "Racing TV", region: "europe", url: "https://www.racingtv.com/news/latest", apiUrl: "https://api.racingtv.com/news/articles/latest?pagination%5Bpage%5D=1", baseUrl: "https://www.racingtv.com", parser: "generic", pathHints: ["/news"], preferTextProxy: false, tryDirect: true, requestHeaders: { Accept: "application/json", "X-Requested-With": "racingtv-web/1.0.0" } },
         { id: "irishracing", name: "Irish Racing", region: "europe", url: "https://www.irishracing.com/news", baseUrl: "https://www.irishracing.com", parser: "generic", pathHints: ["/news"], preferTextProxy: true },
-        { id: "dailymail_racing", name: "Daily Mail Racing", region: "europe", url: "https://www.dailymail.com/sport/racing/index.html", feedUrl: "https://www.dailymail.com/sport/racing/index.rss", baseUrl: "https://www.dailymail.com", parser: "generic", pathHints: ["/sport/racing/article-"], allowedHosts: ["dailymail.co.uk"], preferTextProxy: true },
+        { id: "dailymail_racing", name: "Daily Mail Racing", region: "europe", url: "https://www.dailymail.com/sport/racing/index.html", feedUrl: "https://www.dailymail.com/sport/racing/index.rss", baseUrl: "https://www.dailymail.com", parser: "generic", pathHints: ["/sport/racing/article-"], allowedHosts: ["dailymail.co.uk"], preferTextProxy: true, tryDirect: true },
         { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", feedUrl: "https://www.mirror.co.uk/sport/horse-racing/?service=rss", baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], preferTextProxy: true },
         { id: "sportinglife_features", name: "Sporting Life Racing", region: "europe", url: "https://www.sportinglife.com/racing/features", baseUrl: "https://www.sportinglife.com", parser: "generic", pathHints: ["/racing/news/", "/racing/features/"], preferTextProxy: true },
         { id: "irishfield_bloodstock", name: "The Irish Field Bloodstock", region: "europe", url: "https://www.theirishfield.ie/ireland/bloodstock/82", apiUrl: "https://api2.theirishfield.ie/v1/channel/topic.php?id=82&level=1&limit=18&offset=0", baseUrl: "https://www.theirishfield.ie", parser: "generic", pathHints: ["/bloodstock/", "/racing/"], includeAnySameHost: true, preferTextProxy: false },
@@ -957,6 +957,9 @@
         // API/RSSまでMarkdown化するとJSON/XMLとして扱えなくなるため、site.urlのときだけ元設定を使う。
         const requestSite = {
           ...site,
+          // RSS/APIをJina Readerへ渡すとXML/JSON構造がMarkdown化され、空リンク見出しなどのノイズが混ざる。
+          // Jinaは公式ページHTMLを読む最後の手段としてだけ使う。
+          allowTextProxy: sourceUrl === site.url,
           preferTextProxy: sourceUrl === site.url ? site.preferTextProxy : false
         };
 
@@ -1039,7 +1042,8 @@
       ];
 
       // Jina ReaderはHTMLをMarkdown化する経路。動的サイトや403サイトの代替として有効。
-      const textProxyUrls = [CONFIG.TEXT_PROXY(url)];
+      // RSS/APIではタイトルや日時の構造が壊れることがあるため、allowTextProxy=falseなら完全に候補から外す。
+      const textProxyUrls = site.allowTextProxy === false ? [] : [CONFIG.TEXT_PROXY(url)];
 
       // preferTextProxyがtrueのサイトは、HTMLよりJina Markdownの方が抽出しやすい。
       // falseのサイトは、RSS/API/構造化HTMLを優先してからMarkdownに落とす。
@@ -1537,6 +1541,9 @@
           url = linkedHeading[2];
         } else if (plainHeading) {
           title = plainHeading[1];
+          // Daily MailのRSSをJinaがMarkdown化すると「### [](URL)」のような空リンク見出しになることがある。
+          // これは記事タイトルではなく変換ノイズなので、URLが近傍にあってもカード化しない。
+          if (/^\[\]\(https?:\/\/[^)]+\)$/i.test(title)) return;
           url = findMarkdownArticleLinkNear(lines, index, site);
         }
 
@@ -2234,6 +2241,8 @@
     // 見出し末尾の媒体名や不要な導入語を除去する。
     function cleanTitle(value) {
       return cleanWhitespace(value)
+        // Markdownの空リンクだけが見出しとして残った場合は、タイトル扱いせず空文字へ落とす。
+        .replace(/^\[\]\(https?:\/\/[^)]+\)$/i, "")
         .replace(/\s*\|\s*(Racing Post|BloodHorse|Daily Mail Online|Daily Mail|Mirror|SCMP|Racing\.com)\s*$/i, "")
         .replace(/\s*-\s*(Horse Racing News|Racing News)\s*$/i, "")
         .replace(/^(Read more|Premium|Exclusive)\s*:?\s*/i, "")
@@ -2250,6 +2259,7 @@
     function isLikelyHeadline(title) {
       const clean = cleanTitle(title);
       if (!clean || clean.length < 6 || clean.length > 240) return false;
+      if (/^\[\]\(https?:\/\/[^)]+\)$/i.test(clean)) return false;
       if (/^(news|latest news|bloodstock|racing|features|sport|subscribe|sign in|login|register|menu|search|home|more|read more|view all|next|previous|advertisement|privacy policy|terms and conditions|cookie policy)$/i.test(clean)) return false;
       if (/^(raceday live|today's edition|previous editions|global rankings|newsletter sign-up|newsletter|premier league|uk news|view all campaigns)$/i.test(clean)) return false;
       if (/^(the biz|sales reports|expert opinion|breeding and bloodstock|bloodstock sales|sales calendar|sales results|stallions?|sires?|columnists?)$/i.test(clean)) return false;
