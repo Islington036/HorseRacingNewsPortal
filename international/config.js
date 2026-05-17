@@ -8,7 +8,7 @@
       MAX_ITEMS_PER_SITE: 18,
       ALLOW_UNDATED_LATEST_ITEMS: false,
       UNDATED_ITEMS_PER_SITE: 0,
-      CACHE_KEY: "international-horse-racing-news-portal-cache-v1",
+      CACHE_KEY: "international-horse-racing-news-portal-cache-v2",
       SETTINGS_KEY: "international-horse-racing-news-portal-settings-v1",
       FALLBACK_THUMBNAIL:
         "data:image/svg+xml;charset=UTF-8," +
