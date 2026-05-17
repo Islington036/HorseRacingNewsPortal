@@ -250,6 +250,19 @@
       font-weight: 800;
     }
 
+    .language-select {
+      width: 100%;
+      height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      outline: none;
+    }
+
     .toggle-row {
       min-height: 38px;
       display: flex;
@@ -665,27 +678,34 @@
     <header class="topbar">
       <div class="topbar-inner">
         <div>
-          <h1>海外競馬ニュース早見ポータル</h1>
+          <h1 id="pageTitle">海外競馬ニュース早見ポータル</h1>
           <p id="subtitle" class="subtitle">欧州・米国・豪州・ニュージーランド・香港の競馬ニュースを3日分だけ確認</p>
         </div>
         <div class="controls" role="search">
           <label class="search-wrap">
-            <span class="visually-hidden">ヘッドライン検索</span>
+            <span id="searchLabel" class="visually-hidden">ヘッドライン検索</span>
             <input id="searchInput" type="search" placeholder="見出し・媒体名・地域・サイトで検索" autocomplete="off">
           </label>
           <button id="refreshButton" type="button">更新</button>
           <details id="settingsDetails" class="settings-dropdown">
             <summary class="settings-summary">
-              <span>設定</span>
+              <span id="settingsSummaryLabel">設定</span>
               <span id="currentSettingsLabel" class="settings-current">3日以内 / ライト</span>
             </summary>
             <div class="settings-menu" aria-label="表示設定">
               <label class="toggle-row">
-                <span>ダークモード</span>
+                <span id="darkModeLabel">ダークモード</span>
                 <input id="darkModeToggle" type="checkbox" role="switch" aria-label="ダークモード">
               </label>
+              <label class="setting-group">
+                <span id="languageSettingLabel" class="setting-label">表示言語</span>
+                <select id="languageSelect" class="language-select" aria-label="表示言語">
+                  <option value="ja">日本語</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
               <div class="setting-group">
-                <div class="setting-label">取得対象の日数</div>
+                <div id="daysSettingLabel" class="setting-label">取得対象の日数</div>
                 <div id="daysOptions" class="segmented-control" role="group" aria-label="取得対象の日数"></div>
               </div>
             </div>
@@ -697,16 +717,16 @@
     <section class="filter-area" aria-label="ニュース絞り込み">
       <details id="filterDetails" class="filter-dropdown">
         <summary class="filter-summary">
-          <span>絞り込み</span>
+          <span id="filterSummaryLabel">絞り込み</span>
           <span id="currentFilterLabel" class="filter-current">全地域 / 全サイト</span>
         </summary>
         <div class="filter-menu">
           <div class="filter-group">
-            <div class="filter-label">地域</div>
+            <div id="regionFilterLabel" class="filter-label">地域</div>
             <nav id="regionTabs" class="region-tabs" aria-label="地域フィルタ"></nav>
           </div>
           <div class="filter-group">
-            <div class="filter-label">サイト</div>
+            <div id="siteFilterLabel" class="filter-label">サイト</div>
             <nav id="siteTabs" class="site-tabs" aria-label="サイトフィルタ"></nav>
           </div>
         </div>
@@ -781,7 +801,7 @@
         { id: "bloodhorse", name: "BloodHorse", region: "america", url: "https://www.bloodhorse.com/horse-racing/articles/index", baseUrl: "https://www.bloodhorse.com", parser: "generic", pathHints: ["/horse-racing/articles/"], preferTextProxy: true },
         { id: "tdn_america", name: "TDN America", region: "america", url: "https://www.thoroughbreddailynews.com/category/news/", feedUrl: "https://www.thoroughbreddailynews.com/category/news/feed/", baseUrl: "https://www.thoroughbreddailynews.com", parser: "generic", pathHints: ["/category/news/"], includeAnySameHost: true },
         { id: "drf", name: "Daily Racing Form", region: "america", url: "https://www.drf.com/news/all-news", baseUrl: "https://www.drf.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
-        { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], includeAnySameHost: true, preferTextProxy: true },
+        { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], includeAnySameHost: true, preferTextProxy: true, requireMarkdownImage: true },
         { id: "racing_com", name: "Racing.com", region: "australia", url: "https://www.racing.com/news/latest-news", baseUrl: "https://www.racing.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
         { id: "racenet", name: "Racenet", region: "australia", url: "https://www.racenet.com.au/news", baseUrl: "https://www.racenet.com.au", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
         { id: "anzbloodstock", name: "ANZ Bloodstock News", region: "australia", url: "https://www.anzbloodstocknews.com/category/latest-news/", baseUrl: "https://www.anzbloodstocknews.com", parser: "generic", pathHints: ["/category/latest-news/"], includeAnySameHost: true, preferTextProxy: true },
@@ -791,6 +811,137 @@
         { id: "loveracing_nz", name: "LOVERACING.NZ", region: "new-zealand", url: "https://loveracing.nz/news/articles/racing", baseUrl: "https://loveracing.nz", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
         { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", feedUrl: "https://www.scmp.com/rss/95/feed", baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true }
       ]
+    };
+
+    const I18N = {
+      ja: {
+        locale: "ja-JP",
+        htmlLang: "ja",
+        appTitle: "海外競馬ニュース早見ポータル",
+        subtitle: ({ days }) => `欧州・米国・豪州・ニュージーランド・香港の競馬ニュースを${days}日分だけ確認`,
+        searchLabel: "ヘッドライン検索",
+        searchPlaceholder: "見出し・媒体名・地域・サイトで検索",
+        refresh: "更新",
+        refreshing: "更新中",
+        settings: "設定",
+        darkMode: "ダークモード",
+        language: "表示言語",
+        daysSetting: "取得対象の日数",
+        dayOption: ({ day }) => `${day}日以内`,
+        currentSettings: ({ days, theme }) => `${days}日以内 / ${theme}`,
+        light: "ライト",
+        dark: "ダーク",
+        filter: "絞り込み",
+        region: "地域",
+        site: "サイト",
+        allRegions: "全地域",
+        allSites: "全サイト",
+        currentFilter: ({ region, site, search, count }) => `${region} / ${site}${search ? ` / 検索: ${search}` : ""} / ${count}件`,
+        loadingStatus: "取得中",
+        loadingMessage: ({ total, days }) => `${total}サイトからヘッドラインを取得しています。表示対象は${days}日以内です。`,
+        completedStatus: "更新完了",
+        completedMessage: ({ days, count }) => `${days}日以内の${count}件を表示しています。`,
+        noWindowStatus: "期間内記事なし",
+        noWindowAfterFetch: ({ days }) => `取得は完了しましたが、${days}日以内に表示できる記事はありません。`,
+        noWindowMessage: ({ days }) => `${days}日以内の記事はありません。日数を広げるか更新してください。`,
+        failedStatus: "取得失敗",
+        failedNoItems: "表示できるヘッドラインを取得できませんでした。",
+        failedUsingCache: "新しい取得結果がないため、前回キャッシュを表示しています。",
+        partialFailedStatus: "一部取得失敗",
+        showingStatus: "表示中",
+        standbyStatus: "待機中",
+        standbyMessage: "更新ボタンで最新ヘッドラインを取得します。",
+        lastUpdated: ({ date }) => date ? `最終更新: ${date}` : "未更新",
+        resultSuffix: ({ filter, count }) => `${filter} 表示 ${count}件`,
+        searchSuffix: ({ filter, count, days, total }) => `${filter}の検索結果 ${count}件 / ${days}日以内の全${total}件`,
+        settingsChangedStatus: "設定変更",
+        settingsChangedMessage: ({ days }) => `${days}日以内の記事だけを表示しています。必要なら更新で再取得できます。`,
+        noExtract: "ヘッドラインを抽出できませんでした",
+        fetchFailed: "取得に失敗しました",
+        timeout: "タイムアウトしました",
+        errorPrefix: "エラー",
+        notePrefix: "注記",
+        latestDetected: ({ days, date }) => `${days}日以内の記事がありません（最新検出: ${date}）`,
+        thumbnailSite: "サムネイル",
+        thumbnailNote: ({ count }) => `${count}件は画像が見つからないためダミー画像で表示しています`,
+        noImage: "No Image",
+        dateUnknown: "日時未検出",
+        dateEstimatedTitle: ({ date }) => `取得順から仮配置: ${date}`,
+        emptyState: "表示できるニュースがありません。検索条件を変えるか、更新を試してください。",
+        summaryEmpty: "該当サイト",
+        storageError: "設定保存に失敗しました",
+        regions: {
+          europe: "ヨーロッパ",
+          america: "アメリカ",
+          australia: "オーストラリア",
+          "new-zealand": "ニュージーランド",
+          "hong-kong": "香港"
+        }
+      },
+      en: {
+        locale: "en-US",
+        htmlLang: "en",
+        appTitle: "International Horse Racing News Portal",
+        subtitle: ({ days }) => `Track horse racing news from Europe, America, Australia, New Zealand, and Hong Kong for the last ${days} day${days === 1 ? "" : "s"}`,
+        searchLabel: "Headline search",
+        searchPlaceholder: "Search headline, source, region, or site",
+        refresh: "Refresh",
+        refreshing: "Refreshing",
+        settings: "Settings",
+        darkMode: "Dark mode",
+        language: "Display language",
+        daysSetting: "Article age",
+        dayOption: ({ day }) => `Within ${day} day${day === 1 ? "" : "s"}`,
+        currentSettings: ({ days, theme }) => `${days} day${days === 1 ? "" : "s"} / ${theme}`,
+        light: "Light",
+        dark: "Dark",
+        filter: "Filters",
+        region: "Region",
+        site: "Site",
+        allRegions: "All regions",
+        allSites: "All sites",
+        currentFilter: ({ region, site, search, count }) => `${region} / ${site}${search ? ` / Search: ${search}` : ""} / ${count}`,
+        loadingStatus: "Loading",
+        loadingMessage: ({ total, days }) => `Fetching headlines from ${total} sites. Showing articles within ${days} day${days === 1 ? "" : "s"}.`,
+        completedStatus: "Updated",
+        completedMessage: ({ days, count }) => `Showing ${count} article${count === 1 ? "" : "s"} within ${days} day${days === 1 ? "" : "s"}.`,
+        noWindowStatus: "No Articles In Range",
+        noWindowAfterFetch: ({ days }) => `Fetch completed, but no articles are available within ${days} day${days === 1 ? "" : "s"}.`,
+        noWindowMessage: ({ days }) => `No articles within ${days} day${days === 1 ? "" : "s"}. Expand the range or refresh.`,
+        failedStatus: "Fetch Failed",
+        failedNoItems: "No displayable headlines could be fetched.",
+        failedUsingCache: "No new results were fetched, so the previous cache is still shown.",
+        partialFailedStatus: "Partial Failure",
+        showingStatus: "Showing",
+        standbyStatus: "Ready",
+        standbyMessage: "Press refresh to fetch the latest headlines.",
+        lastUpdated: ({ date }) => date ? `Last updated: ${date}` : "Not updated",
+        resultSuffix: ({ filter, count }) => `${filter} showing ${count}`,
+        searchSuffix: ({ filter, count, days, total }) => `${filter} search results ${count} / ${total} within ${days} day${days === 1 ? "" : "s"}`,
+        settingsChangedStatus: "Settings Updated",
+        settingsChangedMessage: ({ days }) => `Showing only articles within ${days} day${days === 1 ? "" : "s"}. Refresh if needed.`,
+        noExtract: "Could not extract headlines",
+        fetchFailed: "Fetch failed",
+        timeout: "Request timed out",
+        errorPrefix: "Error",
+        notePrefix: "Note",
+        latestDetected: ({ days, date }) => `No articles within ${days} day${days === 1 ? "" : "s"} (latest detected: ${date})`,
+        thumbnailSite: "Thumbnail",
+        thumbnailNote: ({ count }) => `${count} article${count === 1 ? "" : "s"} use the fallback image because no thumbnail was found`,
+        noImage: "No Image",
+        dateUnknown: "Date unknown",
+        dateEstimatedTitle: ({ date }) => `Estimated from listing order: ${date}`,
+        emptyState: "No news to display. Change the search or filters, or refresh.",
+        summaryEmpty: "Matching sites",
+        storageError: "Failed to save settings",
+        regions: {
+          europe: "Europe",
+          america: "America",
+          australia: "Australia",
+          "new-zealand": "New Zealand",
+          "hong-kong": "Hong Kong"
+        }
+      }
     };
 
     const REGION_ALL = { id: "all", name: "すべて" };
@@ -806,19 +957,30 @@
       activeRegion: "all",
       activeSite: "all",
       activeDaysBack: CONFIG.DAYS_BACK,
-      darkMode: false
+      darkMode: false,
+      language: "ja"
     };
 
     const elements = {
+      pageTitle: document.querySelector("#pageTitle"),
       subtitle: document.querySelector("#subtitle"),
       refreshButton: document.querySelector("#refreshButton"),
+      searchLabel: document.querySelector("#searchLabel"),
       searchInput: document.querySelector("#searchInput"),
       settingsDetails: document.querySelector("#settingsDetails"),
+      settingsSummaryLabel: document.querySelector("#settingsSummaryLabel"),
       currentSettingsLabel: document.querySelector("#currentSettingsLabel"),
+      darkModeLabel: document.querySelector("#darkModeLabel"),
       darkModeToggle: document.querySelector("#darkModeToggle"),
+      languageSettingLabel: document.querySelector("#languageSettingLabel"),
+      languageSelect: document.querySelector("#languageSelect"),
+      daysSettingLabel: document.querySelector("#daysSettingLabel"),
       daysOptions: document.querySelector("#daysOptions"),
+      filterSummaryLabel: document.querySelector("#filterSummaryLabel"),
       currentFilterLabel: document.querySelector("#currentFilterLabel"),
+      regionFilterLabel: document.querySelector("#regionFilterLabel"),
       regionTabs: document.querySelector("#regionTabs"),
+      siteFilterLabel: document.querySelector("#siteFilterLabel"),
       siteTabs: document.querySelector("#siteTabs"),
       statusLine: document.querySelector("#statusLine"),
       errorList: document.querySelector("#errorList"),
@@ -836,6 +998,12 @@
       applyTheme();
       renderSettings();
     });
+    elements.languageSelect.addEventListener("change", () => {
+      // 言語はニュースデータではなく表示設定として扱い、保存後すぐに画面全体の文言を再描画する。
+      state.language = normalizeLanguage(elements.languageSelect.value);
+      saveSettings();
+      render();
+    });
     elements.daysOptions.addEventListener("click", (event) => {
       const button = event.target.closest("[data-days]");
       if (!button) return;
@@ -844,7 +1012,7 @@
       state.activeDaysBack = clampDaysBack(button.dataset.days);
       saveSettings();
       render();
-      setStatus("設定変更", `${state.activeDaysBack}日以内の記事だけを表示しています。必要なら更新で再取得できます。`);
+      setStatus(t("settingsChangedStatus"), t("settingsChangedMessage", { days: state.activeDaysBack }));
     });
     elements.regionTabs.addEventListener("click", (event) => {
       const button = event.target.closest("[data-region]");
@@ -864,7 +1032,8 @@
     window.InternationalHorseRacingNewsPortal = {
       CONFIG,
       state,
-      refreshAll
+      refreshAll,
+      render
     };
 
     // 初期表示時にキャッシュを復元し、現在の条件で画面を描画する。
@@ -880,9 +1049,9 @@
       state.isLoading = true;
       state.errors = [];
       state.siteLatest = {};
-      setStatus("取得中", `${CONFIG.SITES.length}サイトからヘッドラインを取得しています。表示対象は${state.activeDaysBack}日以内です。`);
+      setStatus(t("loadingStatus"), t("loadingMessage", { total: CONFIG.SITES.length, days: state.activeDaysBack }));
       elements.refreshButton.disabled = true;
-      elements.refreshButton.textContent = "更新中";
+      elements.refreshButton.textContent = t("refreshing");
       renderErrors();
 
       // すべての媒体を同時に取得する。1媒体の失敗で全体を止めないためallSettledを使う。
@@ -929,17 +1098,17 @@
 
       state.isLoading = false;
       elements.refreshButton.disabled = false;
-      elements.refreshButton.textContent = "更新";
+      elements.refreshButton.textContent = t("refresh");
 
       const visibleCount = getDateScopedItems().length;
       if (visibleCount > 0) {
-        setStatus("更新完了", `${state.activeDaysBack}日以内の${visibleCount}件を表示しています。`);
+        setStatus(t("completedStatus"), t("completedMessage", { days: state.activeDaysBack, count: visibleCount }));
       } else if (merged.length > 0) {
-        setStatus("期間内記事なし", `取得は完了しましたが、${state.activeDaysBack}日以内に表示できる記事はありません。`);
+        setStatus(t("noWindowStatus"), t("noWindowAfterFetch", { days: state.activeDaysBack }));
       } else if (state.allItems.length > 0) {
-        setStatus("取得失敗", "新しい取得結果がないため、前回キャッシュを表示しています。");
+        setStatus(t("failedStatus"), t("failedUsingCache"));
       } else {
-        setStatus("取得失敗", "表示できるヘッドラインを取得できませんでした。");
+        setStatus(t("failedStatus"), t("failedNoItems"));
       }
 
       render();
@@ -987,7 +1156,7 @@
         }
       }
 
-      throw lastError || new Error("ヘッドラインを抽出できませんでした");
+      throw lastError || new Error(t("noExtract"));
     }
 
     // 取得したレスポンスをJSON/XML/HTMLとして解釈し、サイト設定に応じた抽出結果へ正規化する。
@@ -1025,7 +1194,7 @@
         }
       }
 
-      throw lastError || new Error("取得に失敗しました");
+      throw lastError || new Error(t("fetchFailed"));
     }
 
     // CORS制限を避けるために試行するプロキシURLの優先順を組み立てる。
@@ -1082,7 +1251,7 @@
         return await response.text();
       } catch (error) {
         if (error.name === "AbortError") {
-          throw new Error("タイムアウトしました");
+          throw new Error(t("timeout"));
         }
         throw error;
       } finally {
@@ -1735,12 +1904,18 @@
 
         const publishedAt = findMarkdownDateNear(lines, index, url);
         if (!publishedAt) return;
+        const markdownThumbnail = thumbnail || findMarkdownImageNear(lines, index, url);
+        if (site.requireMarkdownImage && !markdownThumbnail) {
+          // Paulick ReportのRelated Articlesは記事リンクと日時だけがあり、一覧上の画像が存在しない。
+          // 画像付きカードだけを採用し、ダミー画像だらけになるのを避ける。
+          return;
+        }
 
         items.push({
           title,
           url,
           publishedAt,
-          thumbnail: thumbnail || findMarkdownImageNear(lines, index, url),
+          thumbnail: markdownThumbnail,
           source: site.name
         });
       });
@@ -2611,6 +2786,9 @@
     function render() {
       const filtered = getFilteredItems();
 
+      // 言語切替でHTML直書き部分も更新されるよう、一覧描画の前に静的文言を同期する。
+      renderStaticText();
+
       // 設定メニューは取得結果とは独立しているため、表示再描画のたびに現在状態をボタンへ反映する。
       renderSettings();
 
@@ -2630,49 +2808,77 @@
 
       if (!state.isLoading) {
         const query = elements.searchInput.value.trim();
-        const regionText = state.activeRegion === "all" ? "全地域" : getRegionLabel(state.activeRegion);
-        const siteText = state.activeSite === "all" ? "全サイト" : getSiteLabel(state.activeSite);
+        const regionText = state.activeRegion === "all" ? t("allRegions") : getRegionLabel(state.activeRegion);
+        const siteText = state.activeSite === "all" ? t("allSites") : getSiteLabel(state.activeSite);
         const filterText = `${regionText} / ${siteText}`;
-        const lastUpdated = state.lastUpdatedAt ? `最終更新: ${formatDateTime(state.lastUpdatedAt)}` : "未更新";
+        const lastUpdated = t("lastUpdated", { date: state.lastUpdatedAt ? formatDateTime(state.lastUpdatedAt) : "" });
         const dateScopedCount = getDateScopedItems().length;
-        const suffix = query ? `${filterText}の検索結果 ${filtered.length}件 / ${state.activeDaysBack}日以内の全${dateScopedCount}件` : `${filterText} 表示 ${filtered.length}件`;
+        const suffix = query
+          ? t("searchSuffix", { filter: filterText, count: filtered.length, days: state.activeDaysBack, total: dateScopedCount })
+          : t("resultSuffix", { filter: filterText, count: filtered.length });
         if (state.errors.length > 0 && state.allItems.length === 0) {
-          setStatus("取得失敗", "表示できるヘッドラインを取得できませんでした。");
+          setStatus(t("failedStatus"), t("failedNoItems"));
         } else if (state.errors.length > 0) {
-          setStatus("一部取得失敗", `${suffix}。${lastUpdated}`);
+          setStatus(t("partialFailedStatus"), joinStatusParts(suffix, lastUpdated));
         } else if (dateScopedCount === 0 && state.allItems.length > 0) {
-          setStatus("期間内記事なし", `${state.activeDaysBack}日以内の記事はありません。日数を広げるか更新してください。`);
+          setStatus(t("noWindowStatus"), t("noWindowMessage", { days: state.activeDaysBack }));
         } else {
-          setStatus(state.allItems.length ? "表示中" : "待機中", `${suffix}。${lastUpdated}`);
+          setStatus(state.allItems.length ? t("showingStatus") : t("standbyStatus"), joinStatusParts(suffix, lastUpdated));
         }
       }
+    }
+
+    // 言語設定に応じて、HTML直書きのラベルやplaceholderをまとめて更新する。
+    function renderStaticText() {
+      document.documentElement.lang = t("htmlLang");
+      document.title = t("appTitle");
+      elements.pageTitle.textContent = t("appTitle");
+      elements.searchLabel.textContent = t("searchLabel");
+      elements.searchInput.placeholder = t("searchPlaceholder");
+      elements.settingsSummaryLabel.textContent = t("settings");
+      elements.darkModeLabel.textContent = t("darkMode");
+      elements.darkModeToggle.setAttribute("aria-label", t("darkMode"));
+      elements.languageSettingLabel.textContent = t("language");
+      elements.languageSelect.setAttribute("aria-label", t("language"));
+      elements.daysSettingLabel.textContent = t("daysSetting");
+      elements.daysOptions.setAttribute("aria-label", t("daysSetting"));
+      elements.filterSummaryLabel.textContent = t("filter");
+      elements.regionFilterLabel.textContent = t("region");
+      elements.regionTabs.setAttribute("aria-label", t("region"));
+      elements.siteFilterLabel.textContent = t("site");
+      elements.siteTabs.setAttribute("aria-label", t("site"));
+      elements.emptyState.textContent = t("emptyState");
+      if (!state.isLoading) elements.refreshButton.textContent = t("refresh");
     }
 
     // 設定メニュー内の日数ボタン、ダークモード表示、サブタイトルを現在状態に合わせる。
     function renderSettings() {
       elements.darkModeToggle.checked = state.darkMode;
-      elements.currentSettingsLabel.textContent = `${state.activeDaysBack}日以内 / ${state.darkMode ? "ダーク" : "ライト"}`;
-      elements.subtitle.textContent = `欧州・米国・豪州・ニュージーランド・香港の競馬ニュースを${state.activeDaysBack}日分だけ確認`;
+      elements.languageSelect.value = state.language;
+      elements.currentSettingsLabel.textContent = t("currentSettings", {
+        days: state.activeDaysBack,
+        theme: state.darkMode ? t("dark") : t("light")
+      });
+      elements.subtitle.textContent = t("subtitle", { days: state.activeDaysBack });
 
       // ボタンを毎回作り直すことで、CONFIG.MIN_DAYS_BACK/MAX_DAYS_BACKを変えた場合もUIが自動追従する。
       const options = [];
       for (let day = CONFIG.MIN_DAYS_BACK; day <= CONFIG.MAX_DAYS_BACK; day += 1) {
         const active = day === state.activeDaysBack ? " is-active" : "";
         const pressed = day === state.activeDaysBack ? "true" : "false";
-        options.push(`<button class="day-option${active}" type="button" data-days="${day}" aria-pressed="${pressed}">${day}日以内</button>`);
+        options.push(`<button class="day-option${active}" type="button" data-days="${day}" aria-pressed="${pressed}">${escapeHtml(t("dayOption", { day }))}</button>`);
       }
       elements.daysOptions.innerHTML = options.join("");
     }
 
     // 閉じたプルダウン上に、現在選択中の地域・サイト・表示件数を短く表示する。
     function renderCurrentFilterLabel(items) {
-      const regionText = state.activeRegion === "all" ? "全地域" : getRegionLabel(state.activeRegion);
-      const siteText = state.activeSite === "all" ? "全サイト" : getSiteLabel(state.activeSite);
+      const regionText = state.activeRegion === "all" ? t("allRegions") : getRegionLabel(state.activeRegion);
+      const siteText = state.activeSite === "all" ? t("allSites") : getSiteLabel(state.activeSite);
 
       // 検索語がある場合は、プルダウンを開かなくても絞り込み中だと分かる文言にする。
       const query = elements.searchInput.value.trim();
-      const searchText = query ? ` / 検索: ${query}` : "";
-      elements.currentFilterLabel.textContent = `${regionText} / ${siteText}${searchText} / ${items.length}件`;
+      elements.currentFilterLabel.textContent = t("currentFilter", { region: regionText, site: siteText, search: query, count: items.length });
     }
 
     // 地域、サイト、検索語をすべて反映した表示対象ニュースを返す。
@@ -2683,7 +2889,7 @@
         .filter((item) => state.activeSite === "all" || item.sourceId === state.activeSite)
         .filter((item) => {
           // 検索対象は見出し、媒体名、地域名、URL。入力なしの場合はincludes("")で全件通る。
-          const haystack = `${item.title} ${item.source} ${item.regionName} ${item.url}`.toLowerCase();
+          const haystack = `${item.title} ${item.source} ${getRegionLabel(item.region)} ${item.url}`.toLowerCase();
           return haystack.includes(query);
         });
     }
@@ -2720,7 +2926,8 @@
       elements.regionTabs.innerHTML = REGION_OPTIONS.map((region) => {
         // data-regionにIDを置き、クリックイベント側で状態だけを更新する。
         const active = region.id === state.activeRegion ? " is-active" : "";
-        return `<button class="region-tab${active}" type="button" data-region="${escapeHtml(region.id)}">${escapeHtml(region.name)} ${counts.get(region.id) || 0}</button>`;
+        const label = region.id === "all" ? t("allRegions") : getRegionLabel(region.id);
+        return `<button class="region-tab${active}" type="button" data-region="${escapeHtml(region.id)}">${escapeHtml(label)} ${counts.get(region.id) || 0}</button>`;
       }).join("");
     }
 
@@ -2739,14 +2946,15 @@
         // 全サイトだけは地域内総数、それ以外は媒体別件数を表示する。
         const active = site.id === state.activeSite ? " is-active" : "";
         const count = site.id === "all" ? regionScopedItems.length : counts.get(site.id) || 0;
-        return `<button class="site-tab${active}" type="button" data-site="${escapeHtml(site.id)}">${escapeHtml(site.name)} ${count}</button>`;
+        const label = site.id === "all" ? t("allSites") : site.name;
+        return `<button class="site-tab${active}" type="button" data-site="${escapeHtml(site.id)}">${escapeHtml(label)} ${count}</button>`;
       }).join("");
     }
 
     // 1件分のニュースカードHTMLを組み立てる。
     function renderCard(item) {
-      const dateText = item.dateEstimated ? "日時未検出" : formatDateTime(item.publishedAt);
-      const dateTitle = item.dateEstimated ? `取得順から仮配置: ${formatDateTime(item.publishedAt)}` : formatDateTime(item.publishedAt);
+      const dateText = item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt);
+      const dateTitle = item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
       return `
         <a class="news-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
           ${renderThumbnail(item)}
@@ -2754,7 +2962,7 @@
             <h2 class="headline">${escapeHtml(item.title)}</h2>
             <div class="meta">
               <span class="source-badge">${escapeHtml(item.source)}</span>
-              <span class="region-badge">${escapeHtml(item.regionName)}</span>
+              <span class="region-badge">${escapeHtml(getRegionLabel(item.region))}</span>
               <time datetime="${item.publishedAt.toISOString()}" title="${escapeHtml(dateTitle)}">${escapeHtml(dateText)}</time>
             </div>
           </div>
@@ -2776,7 +2984,7 @@
 
     // 画像がない記事向けのダミーサムネイル要素を返す。
     function renderFallbackThumbnail() {
-      return `<div class="thumb thumb-fallback" aria-hidden="true">No Image</div>`;
+      return `<div class="thumb thumb-fallback" aria-hidden="true">${escapeHtml(t("noImage"))}</div>`;
     }
 
     // 画像読み込み失敗時に、壊れたimgをダミーサムネイルへ差し替える。
@@ -2816,7 +3024,7 @@
       elements.siteSummary.innerHTML = [...counts.values()]
         .filter((entry) => entry.count > 0)
         .map((entry) => `<span class="chip">${escapeHtml(entry.name)} <span>${entry.count}</span></span>`)
-        .join("") || `<span class="chip">該当サイト <span>0</span></span>`;
+        .join("") || `<span class="chip">${escapeHtml(t("summaryEmpty"))} <span>0</span></span>`;
     }
 
     // 取得失敗サイト、期間内記事なし、画像なし件数などをステータス領域に表示する。
@@ -2837,7 +3045,7 @@
       elements.errorList.innerHTML = messages
         .map((entry) => {
           // エラーと注記を同じ場所に出し、0件・画像なし・プロキシ失敗の理由を見失わないようにする。
-          const prefix = entry.type === "error" ? "エラー" : "注記";
+          const prefix = entry.type === "error" ? t("errorPrefix") : t("notePrefix");
           return `<div>${escapeHtml(prefix)} ${escapeHtml(entry.site)}: ${escapeHtml(entry.message)}</div>`;
         })
         .join("");
@@ -2858,7 +3066,7 @@
         return {
           type: "note",
           site: site.name,
-          message: `${state.activeDaysBack}日以内の記事がありません（最新検出: ${formatDateTime(latestDate)}）`
+          message: t("latestDetected", { days: state.activeDaysBack, date: formatDateTime(latestDate) })
         };
       }).filter(Boolean);
     }
@@ -2871,8 +3079,8 @@
 
       return [{
         type: "note",
-        site: "サムネイル",
-        message: `${fallbackCount}件は画像が見つからないためダミー画像で表示しています`
+        site: t("thumbnailSite"),
+        message: t("thumbnailNote", { count: fallbackCount })
       }];
     }
 
@@ -2881,9 +3089,29 @@
       elements.statusLine.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(message)}</span>`;
     }
 
+    // 現在の言語で、短い状態文を自然につなげる。
+    function joinStatusParts(first, second) {
+      return state.language === "ja" ? `${first}。${second}` : `${first}. ${second}`;
+    }
+
+    // 翻訳キーから表示文言を取得する。関数型の文言には変数を渡して埋め込む。
+    function t(key, vars = {}) {
+      const dictionary = I18N[state.language] || I18N.ja;
+      const value = key.split(".").reduce((current, part) => current && current[part], dictionary);
+      if (typeof value === "function") return value(vars);
+      if (value !== undefined && value !== null) return value;
+      const fallback = key.split(".").reduce((current, part) => current && current[part], I18N.ja);
+      return typeof fallback === "function" ? fallback(vars) : fallback || key;
+    }
+
+    // 未知の言語コードが保存されていても、対応済み言語へ安全に丸める。
+    function normalizeLanguage(value) {
+      return Object.prototype.hasOwnProperty.call(I18N, value) ? value : "ja";
+    }
+
     // DateをJSTの月日・時刻表示へ整形する。
     function formatDateTime(date) {
-      return new Intl.DateTimeFormat("ja-JP", {
+      return new Intl.DateTimeFormat(t("locale"), {
         timeZone: "Asia/Tokyo",
         month: "numeric",
         day: "numeric",
@@ -2894,8 +3122,7 @@
 
     // 地域IDから画面表示用の地域名を返す。
     function getRegionLabel(regionId) {
-      const region = CONFIG.REGIONS.find((entry) => entry.id === regionId);
-      return region ? region.name : regionId;
+      return t(`regions.${regionId}`) || (CONFIG.REGIONS.find((entry) => entry.id === regionId) || {}).name || regionId;
     }
 
     // サイトIDから画面表示用のサイト名を返す。
@@ -2920,10 +3147,12 @@
         // 日数は将来CONFIG範囲を変えた場合にも壊れないよう、読み込み時に必ず丸める。
         state.activeDaysBack = clampDaysBack(cached.activeDaysBack);
         state.darkMode = Boolean(cached.darkMode);
+        state.language = normalizeLanguage(cached.language || state.language);
       } catch (_error) {
         // 設定JSONが壊れていてもニュース表示は止めない。初期値へ戻してそのまま描画する。
         state.activeDaysBack = CONFIG.DAYS_BACK;
         state.darkMode = false;
+        state.language = "ja";
       }
     }
 
@@ -2934,11 +3163,12 @@
           CONFIG.SETTINGS_KEY,
           JSON.stringify({
             activeDaysBack: state.activeDaysBack,
-            darkMode: state.darkMode
+            darkMode: state.darkMode,
+            language: state.language
           })
         );
       } catch (_error) {
-        state.errors.push({ site: "localStorage", message: "設定保存に失敗しました" });
+        state.errors.push({ site: "localStorage", message: t("storageError") });
       }
     }
 
