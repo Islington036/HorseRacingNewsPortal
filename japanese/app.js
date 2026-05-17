@@ -11,7 +11,9 @@ const state = {
       activeSite: "all",
       activeDaysBack: CONFIG.DAYS_BACK,
       darkMode: false,
-      language: "ja"
+      language: "ja",
+      animatedItemIds: new Set(),
+      animationClearTimer: null
     };
 
     const elements = {
@@ -100,10 +102,12 @@ const state = {
       state.isLoading = true;
       state.errors = [];
       state.siteLatest = {};
+      state.animatedItemIds.clear();
       setStatus(t("loadingStatus"), t("loadingMessage", { total: CONFIG.SITES.length, days: state.activeDaysBack }));
       elements.refreshButton.disabled = true;
       elements.refreshButton.textContent = t("refreshing");
       renderErrors();
+      const previousItemIds = new Set(state.allItems.map((item) => item.id));
 
       // 各媒体は独立しているため、1サイトの失敗で全体表示を止めないようallSettledで並列取得する。
       const results = await Promise.allSettled(CONFIG.SITES.map(fetchSite));
@@ -134,6 +138,7 @@ const state = {
 
       if (merged.length > 0) {
         state.allItems = merged;
+        markItemsForAnimation(merged, previousItemIds);
         state.lastUpdatedAt = new Date();
         saveCache();
       }
@@ -154,6 +159,14 @@ const state = {
       }
 
       render();
+    }
+
+    function markItemsForAnimation(items, previousItemIds) {
+      items.forEach((item) => {
+        if (item && item.id && !previousItemIds.has(item.id)) {
+          state.animatedItemIds.add(item.id);
+        }
+      });
     }
 
     async function fetchSite(site) {
@@ -784,8 +797,9 @@ const state = {
       renderSiteTabs();
       renderSummary(filtered);
       renderErrors();
-      elements.newsList.innerHTML = filtered.map(renderCard).join("");
+      elements.newsList.innerHTML = filtered.map((item, index) => renderCard(item, index)).join("");
       attachThumbnailFallbacks();
+      scheduleAnimationCleanup();
       elements.emptyState.classList.toggle("is-visible", filtered.length === 0);
 
       if (!state.isLoading) {
@@ -884,9 +898,12 @@ const state = {
       }).join("");
     }
 
-    function renderCard(item) {
+    function renderCard(item, index = 0) {
+      const isNew = state.animatedItemIds.has(item.id);
+      const className = isNew ? "news-card is-new" : "news-card";
+      const animationStyle = isNew ? ` style="--appear-delay: ${Math.min(index, 10) * 28}ms"` : "";
       return `
-        <a class="news-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
+        <a class="${className}"${animationStyle} href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
           ${renderThumbnail(item)}
           <div class="news-body">
             <h2 class="headline">${escapeHtml(item.title)}</h2>
@@ -909,6 +926,24 @@ const state = {
 
     function renderFallbackThumbnail() {
       return `<div class="thumb thumb-fallback" aria-hidden="true">${escapeHtml(t("noImage"))}</div>`;
+    }
+
+    function scheduleAnimationCleanup() {
+      if (state.animationClearTimer) {
+        window.clearTimeout(state.animationClearTimer);
+        state.animationClearTimer = null;
+      }
+
+      if (state.animatedItemIds.size === 0) return;
+
+      state.animationClearTimer = window.setTimeout(() => {
+        state.animatedItemIds.clear();
+        state.animationClearTimer = null;
+        elements.newsList.querySelectorAll(".news-card.is-new").forEach((card) => {
+          card.classList.remove("is-new");
+          card.style.removeProperty("--appear-delay");
+        });
+      }, 900);
     }
 
     function attachThumbnailFallbacks() {
