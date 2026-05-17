@@ -608,7 +608,6 @@
         { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], includeAnySameHost: true, preferTextProxy: true },
         { id: "racing_com", name: "Racing.com", region: "australia", url: "https://www.racing.com/news/latest-news", baseUrl: "https://www.racing.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
         { id: "racenet", name: "Racenet", region: "australia", url: "https://www.racenet.com.au/news", baseUrl: "https://www.racenet.com.au", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
-        { id: "newscom_superracing", name: "news.com.au SuperRacing", region: "australia", url: "https://www.news.com.au/sport/superracing", baseUrl: "https://www.news.com.au", parser: "generic", pathHints: ["/sport/superracing/", "news-story"], preferTextProxy: true },
         { id: "anzbloodstock", name: "ANZ Bloodstock News", region: "australia", url: "https://www.anzbloodstocknews.com/category/latest-news/", baseUrl: "https://www.anzbloodstocknews.com", parser: "generic", pathHints: ["/category/latest-news/"], includeAnySameHost: true, preferTextProxy: true },
         { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathHints: ["/edition/", "/news/", "/articles/"], includeAnySameHost: true, preferTextProxy: false },
         { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"] },
@@ -907,7 +906,6 @@
       if (site.id === "thestraight") return extractTheStraightApiItems(data, site);
       if (site.id === "bloodhorse") return extractBloodHorseItems(doc, site);
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
-      if (site.id === "newscom_superracing") return extractNewsComAuItems(rawText, site);
       return [];
     }
 
@@ -1259,31 +1257,6 @@
       const slugWords = fromSlug.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
       const matchedWords = slugWords.filter((word) => bodyPrefix.includes(word)).length;
       return matchedWords >= Math.min(4, slugWords.length) ? fromSlug : cleanTitle(body);
-    }
-
-    // news.com.auのMarkdown見出しから記事候補を抽出し、日時不明分は取得順で仮配置する。
-    function extractNewsComAuItems(text, site) {
-      if (!text) return [];
-
-      const lines = String(text).split(/\r?\n/).map((line) => line.trim());
-      const items = [];
-
-      lines.forEach((line, index) => {
-        const match = line.match(/^#{2,4}\s+\[([^\]]+)\]\((https?:\/\/www\.news\.com\.au\/sport\/superracing\/[^)]+\/news-story\/[^)]+)\)/);
-        if (!match) return;
-
-        const url = match[2];
-        items.push({
-          title: match[1],
-          url,
-          publishedAt: estimateDateForUndatedItem(items.length),
-          dateEstimated: true,
-          thumbnail: findMarkdownImageNear(lines, index),
-          source: site.name
-        });
-      });
-
-      return items.slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
     }
 
     // RSS/Atomフィードから記事タイトル、URL、公開日時、メディア画像を抽出する。
