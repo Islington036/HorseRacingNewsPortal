@@ -69,6 +69,7 @@ const state = {
       const button = event.target.closest("[data-site]");
       if (!button) return;
       state.activeSite = button.dataset.site;
+      saveSettings();
       render();
     });
     window.addEventListener("DOMContentLoaded", boot);
@@ -411,7 +412,7 @@ const state = {
       const title = cleanTitle(raw.title);
       const publishedAt = raw.publishedAt instanceof Date ? raw.publishedAt : parseDate(raw.publishedAt);
 
-      if (!url || !title || !publishedAt) return null;
+      if (!url || !isCandidateArticleUrl(url, site) || !title || !publishedAt) return null;
 
       return {
         id: `${site.id}:${url}`,
@@ -564,8 +565,9 @@ const state = {
       const containers = collectImageSearchContainers(anchor);
       for (const container of containers) {
         const candidates = collectImageCandidates(container);
-        if (candidates.length > 0) {
-          return resolveThumbnail(candidates[0], site, anchor.getAttribute("href"));
+        for (const candidate of candidates) {
+          const resolved = resolveThumbnail(candidate, site, anchor.getAttribute("href"));
+          if (resolved !== CONFIG.FALLBACK_THUMBNAIL) return resolved;
         }
       }
       return resolveThumbnail("", site, anchor.getAttribute("href"));
@@ -722,6 +724,24 @@ const state = {
       if (!title || title.length < 8) return false;
       if (/^(TOP|ログイン|ニュース|検索|Page TOP|メニュー|初めての方はこちら)$/i.test(title)) return false;
       return true;
+    }
+
+    function isCandidateArticleUrl(value, site) {
+      const url = absoluteUrl(value, site.baseUrl);
+      if (!url) return false;
+
+      try {
+        const parsed = new URL(url);
+        const base = new URL(site.baseUrl);
+        const protocolAllowed = parsed.protocol === "https:" || parsed.protocol === "http:";
+        return protocolAllowed && stripWww(parsed.hostname) === stripWww(base.hostname);
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    function stripWww(hostname) {
+      return String(hostname || "").replace(/^www\./i, "");
     }
 
     function absoluteUrl(value, baseUrl) {
@@ -1009,6 +1029,11 @@ const state = {
       return site ? site.name : siteId;
     }
 
+    function normalizeSiteId(siteId) {
+      if (siteId === "all") return "all";
+      return CONFIG.SITES.some((entry) => entry.id === siteId) ? siteId : "all";
+    }
+
     function clampDaysBack(value) {
       const parsed = Number(value);
       if (!Number.isFinite(parsed)) return CONFIG.DAYS_BACK;
@@ -1023,11 +1048,13 @@ const state = {
         state.activeDaysBack = clampDaysBack(cached.activeDaysBack);
         state.darkMode = Boolean(cached.darkMode);
         state.language = normalizeLanguage(cached.language || state.language);
+        state.activeSite = normalizeSiteId(cached.activeSite || state.activeSite);
       } catch (_error) {
         // 設定JSONが壊れていても、ニュース閲覧は初期設定で続けられるよう握りつぶす。
         state.activeDaysBack = CONFIG.DAYS_BACK;
         state.darkMode = false;
         state.language = "ja";
+        state.activeSite = "all";
       }
     }
 
@@ -1038,7 +1065,8 @@ const state = {
           JSON.stringify({
             activeDaysBack: state.activeDaysBack,
             darkMode: state.darkMode,
-            language: state.language
+            language: state.language,
+            activeSite: state.activeSite
           })
         );
       } catch (_error) {
@@ -1076,16 +1104,15 @@ const state = {
 
         state.allItems = cached.allItems
           .map((item) => {
-            const site = CONFIG.SITES.find((entry) => entry.id === item.sourceId) || {
-              id: item.sourceId,
-              baseUrl: item.url
-            };
+            const site = CONFIG.SITES.find((entry) => entry.id === item.sourceId);
+            if (!site) return null;
             return {
               ...item,
               publishedAt: new Date(item.publishedAt),
               thumbnail: resolveThumbnail(item.thumbnail, site, item.url)
             };
           })
+          .filter(Boolean)
           .filter((item) => !Number.isNaN(item.publishedAt.getTime()))
           .filter(isWithinMaxWindow)
           .sort((a, b) => b.publishedAt - a.publishedAt);

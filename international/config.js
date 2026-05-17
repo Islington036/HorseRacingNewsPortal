@@ -118,6 +118,7 @@
         emptyState: "表示できるニュースがありません。検索条件を変えるか、更新を試してください。",
         summaryEmpty: "該当サイト",
         storageError: "設定保存に失敗しました",
+        cacheError: "キャッシュ保存に失敗しました",
         regions: {
           europe: "ヨーロッパ",
           america: "アメリカ",
@@ -182,6 +183,7 @@
         emptyState: "No news to display. Try changing the search or filters, or refresh.",
         summaryEmpty: "Matching sources",
         storageError: "Couldn't save settings",
+        cacheError: "Couldn't save cached headlines",
         regions: {
           europe: "Europe",
           america: "North America",

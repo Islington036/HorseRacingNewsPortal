@@ -73,12 +73,14 @@ const state = {
       if (!button) return;
       state.activeRegion = button.dataset.region;
       syncActiveSiteWithRegion();
+      saveSettings();
       render();
     });
     elements.siteTabs.addEventListener("click", (event) => {
       const button = event.target.closest("[data-site]");
       if (!button) return;
       state.activeSite = button.dataset.site;
+      saveSettings();
       render();
     });
     window.addEventListener("DOMContentLoaded", boot);
@@ -2195,6 +2197,18 @@ const state = {
       return site ? site.name : siteId;
     }
 
+    // 保存済みフィルタが古い設定を指していても、安全な選択肢へ戻す。
+    function normalizeRegionId(regionId) {
+      if (regionId === "all") return "all";
+      return CONFIG.REGIONS.some((entry) => entry.id === regionId) ? regionId : "all";
+    }
+
+    // 保存済みサイトIDが削除済み媒体なら全サイトへ戻す。
+    function normalizeSiteId(siteId) {
+      if (siteId === "all") return "all";
+      return CONFIG.SITES.some((entry) => entry.id === siteId) ? siteId : "all";
+    }
+
     // 日数設定を1〜3日の許容範囲へ丸める。
     function clampDaysBack(value) {
       const parsed = Number(value);
@@ -2212,11 +2226,16 @@ const state = {
         state.activeDaysBack = clampDaysBack(cached.activeDaysBack);
         state.darkMode = Boolean(cached.darkMode);
         state.language = normalizeLanguage(cached.language || state.language);
+        state.activeRegion = normalizeRegionId(cached.activeRegion || state.activeRegion);
+        state.activeSite = normalizeSiteId(cached.activeSite || state.activeSite);
+        syncActiveSiteWithRegion();
       } catch (_error) {
         // 設定JSONが壊れていてもニュース表示は止めない。初期値へ戻してそのまま描画する。
         state.activeDaysBack = CONFIG.DAYS_BACK;
         state.darkMode = false;
         state.language = "ja";
+        state.activeRegion = "all";
+        state.activeSite = "all";
       }
     }
 
@@ -2228,7 +2247,9 @@ const state = {
           JSON.stringify({
             activeDaysBack: state.activeDaysBack,
             darkMode: state.darkMode,
-            language: state.language
+            language: state.language,
+            activeRegion: state.activeRegion,
+            activeSite: state.activeSite
           })
         );
       } catch (_error) {
@@ -2257,7 +2278,7 @@ const state = {
           })
         );
       } catch (_error) {
-        state.errors.push({ site: "localStorage", message: "キャッシュ保存に失敗しました" });
+        state.errors.push({ site: "localStorage", message: t("cacheError") });
       }
     }
 
