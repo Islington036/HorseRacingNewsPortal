@@ -2224,20 +2224,23 @@
         return date;
       }
 
-      match = raw.match(/(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(\d{1,2}):(\d{2})(?:\s*(am|pm))?)?$/i);
-      if (match) {
-        // At The Racesの「Saturday 16 May」は、曜日除去後に「16 May」だけが残る。
-        // ここで先に現在年を補完しないと、ブラウザ標準Dateが2001年など古い年として解釈することがある。
-        const currentYear = new Date().getFullYear();
-        return makeLocalDate(currentYear, monthNumber(match[2]), match[1], match[3] || 0, match[4] || 0, match[5]);
-      }
+      if (!/\b(?:19|20)\d{2}\b/.test(raw)) {
+        // 年なし表記だけをここで補完する。年あり表記まで通すと「May 2026」を月日として誤解するため必ず年の有無を先に見る。
+        match = raw.match(/(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(\d{1,2}):(\d{2})(?:\s*(am|pm))?)?$/i);
+        if (match) {
+          // At The Racesの「Saturday 16 May」は、曜日除去後に「16 May」だけが残る。
+          // ここで先に現在年を補完しないと、ブラウザ標準Dateが2001年など古い年として解釈することがある。
+          const currentYear = new Date().getFullYear();
+          return makeLocalDate(currentYear, monthNumber(match[2]), match[1], match[3] || 0, match[4] || 0, match[5]);
+        }
 
-      match = raw.match(/([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{1,2}):(\d{2})(?:\s*(am|pm))?)?$/i);
-      if (match) {
-        // BloodHorseや英語圏サイトでは「May 16」のように月名が先に来る年なし表記もある。
-        // 上と同じくブラウザ標準Dateより前に処理し、今年の記事として3日以内判定に渡す。
-        const currentYear = new Date().getFullYear();
-        return makeLocalDate(currentYear, monthNumber(match[1]), match[2], match[3] || 0, match[4] || 0, match[5]);
+        match = raw.match(/([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{1,2}):(\d{2})(?:\s*(am|pm))?)?$/i);
+        if (match) {
+          // BloodHorseや英語圏サイトでは「May 16」のように月名が先に来る年なし表記もある。
+          // 上と同じくブラウザ標準Dateより前に処理し、今年の記事として3日以内判定に渡す。
+          const currentYear = new Date().getFullYear();
+          return makeLocalDate(currentYear, monthNumber(match[1]), match[2], match[3] || 0, match[4] || 0, match[5]);
+        }
       }
 
       const native = new Date(raw.replace(/(\d+)(st|nd|rd|th)/gi, "$1"));
