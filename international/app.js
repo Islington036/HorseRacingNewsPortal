@@ -1436,7 +1436,9 @@ const state = {
       const title = cleanTitle(raw.title);
       const publishedAt = raw.publishedAt instanceof Date ? raw.publishedAt : parseDate(raw.publishedAt);
 
-      if (!url || !title || !publishedAt) return null;
+      // JSON-LDや一覧ページの<title>から、媒体説明文やカテゴリ名が記事見出しとして紛れ込むことがある。
+      // ここを最後の共通ゲートにして、抽出経路ごとの漏れを画面表示前に止める。
+      if (!url || !title || !publishedAt || !isLikelyHeadline(title)) return null;
 
       return {
         id: `${site.id}:${url}`,
@@ -1898,6 +1900,7 @@ const state = {
       if (/^\[\]\(https?:\/\/[^)]+\)$/i.test(clean)) return false;
       if (/^(news|latest news|bloodstock|racing|features|sport|subscribe|sign in|login|register|menu|search|home|more|read more|view all|next|previous|advertisement|privacy policy|terms and conditions|cookie policy)$/i.test(clean)) return false;
       if (/^(raceday live|today's edition|previous editions|global rankings|newsletter sign-up|newsletter|premier league|uk news|view all campaigns)$/i.test(clean)) return false;
+      if (/^headlines and features from the thoroughbred industry$/i.test(clean)) return false;
       if (/^(the biz|sales reports|expert opinion|breeding and bloodstock|bloodstock sales|sales calendar|sales results|stallions?|sires?|columnists?)$/i.test(clean)) return false;
       if (/^(facebook|twitter|x|instagram|youtube|tiktok|whatsapp|email|print)$/i.test(clean)) return false;
       if (/^[\d\s:./-]+$/.test(clean)) return false;
