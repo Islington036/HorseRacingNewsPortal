@@ -1,7 +1,9 @@
     :root {
       color-scheme: light;
-      --bg: #f5f7f2;
-      --topbar-bg: rgba(245, 247, 242, 0.92);
+      --bg: #1D3063;
+      --topbar-bg: rgba(29, 48, 99, 0.92);
+      --page-ink: #ffffff;
+      --page-muted: rgba(255, 255, 255, 0.78);
       --panel: #ffffff;
       --ink: #172018;
       --muted: #667066;
@@ -25,6 +27,8 @@
       color-scheme: dark;
       --bg: #000000;
       --topbar-bg: rgba(0, 0, 0, 0.94);
+      --page-ink: #f2f6f0;
+      --page-muted: #a7b2a8;
       --panel: #050505;
       --ink: #f2f6f0;
       --muted: #a7b2a8;
@@ -101,6 +105,7 @@
 
     h1 {
       margin: 0;
+      color: var(--page-ink);
       font-size: clamp(24px, 3vw, 34px);
       line-height: 1.15;
       font-weight: 800;
@@ -108,7 +113,7 @@
 
     .subtitle {
       margin: 6px 0 0;
-      color: var(--muted);
+      color: var(--page-muted);
       font-size: 14px;
     }
 
