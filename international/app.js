@@ -1677,9 +1677,6 @@ const state = {
       const raw = cleanWhitespace(value);
       if (!raw) return null;
 
-      const direct = parseDate(raw);
-      if (direct) return direct;
-
       const patterns = [
         /\b\d{4}-\d{1,2}-\d{1,2}T\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b/i,
         /\b\d{4}[/-]\d{1,2}[/-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?:\s*(?:am|pm))?)?\b/i,
@@ -1698,6 +1695,11 @@ const state = {
         const parsed = parseDate(match[0]);
         if (parsed) return parsed;
       }
+
+      // 長い記事カード本文を丸ごとDateへ渡すと、本文中の数字列から12/31などの誤日付を作ることがある。
+      // 明示的な日付断片を拾えなかった場合だけ、最後のフォールバックとしてブラウザ標準の解釈を使う。
+      const direct = parseDate(raw);
+      if (direct) return direct;
 
       return null;
     }
@@ -1899,7 +1901,7 @@ const state = {
       if (!clean || clean.length < 6 || clean.length > 240) return false;
       if (/^\[\]\(https?:\/\/[^)]+\)$/i.test(clean)) return false;
       if (/^(news|latest news|bloodstock|racing|features|sport|subscribe|sign in|login|register|menu|search|home|more|read more|view all|next|previous|advertisement|privacy policy|terms and conditions|cookie policy)$/i.test(clean)) return false;
-      if (/^(raceday live|today's edition|previous editions|global rankings|newsletter sign-up|newsletter|premier league|uk news|view all campaigns)$/i.test(clean)) return false;
+      if (/^(raceday live|today's edition|previous editions|global rankings|newsletter sign-up|newsletter|premier league|uk news|view all campaigns|job board)$/i.test(clean)) return false;
       if (/^headlines and features from the thoroughbred industry$/i.test(clean)) return false;
       if (/^(the biz|sales reports|expert opinion|breeding and bloodstock|bloodstock sales|sales calendar|sales results|stallions?|sires?|columnists?)$/i.test(clean)) return false;
       if (/^(facebook|twitter|x|instagram|youtube|tiktok|whatsapp|email|print)$/i.test(clean)) return false;
