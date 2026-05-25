@@ -432,6 +432,8 @@ const state = {
       // Racing TV公式APIは公式Origin以外のブラウザfetchで読めないため、静的HTMLではJina Readerを予備経路にする。
       // 将来APIリレーを用意した場合に備え、API用抽出関数も残して同じURL重複排除へ流す。
       if (site.id === "racingtv") return [...extractRacingTvApiItems(data, site), ...extractRacingTvMarkdownItems(rawText, site)];
+      // At The RacesはJina Reader経由だと記事リンクが落ちるため、見出しと日付から公式URL形式を復元する。
+      if (site.id === "attheraces") return extractAtTheRacesMarkdownItems(rawText, site);
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
       // 専用抽出で漏れた記事はPARSERS.generic側のJSON-LD/Feed/Markdown/カード抽出が引き続き拾う。
       if (site.id === "irishracing") return [...extractIrishRacingItems(doc, site), ...extractIrishRacingMarkdownItems(rawText, site)];
@@ -932,26 +934,109 @@ const state = {
 
       const items = [];
       const cardPattern = /\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\s*([^\[\]]{8,500}?)\]\((https?:\/\/www\.racingtv\.com\/news\/[^)]+)\)/g;
+      let undatedCount = 0;
 
       for (const match of String(text).matchAll(cardPattern)) {
         const image = match[1];
         const body = cleanWhitespace(match[2]);
         const url = match[3];
-        const publishedAt = parseDateFromText(body) || parseDateFromUrl(url);
+        let publishedAt = parseDateFromText(body) || parseDateFromUrl(url);
+        let dateEstimated = false;
 
-        // 一覧カードに日時が無い記事は、3日以内判定を誤らないようここでは採用しない。
+        if (!publishedAt && CONFIG.ALLOW_UNDATED_LATEST_ITEMS && undatedCount < CONFIG.UNDATED_ITEMS_PER_SITE) {
+          // Racing TVのJina出力は先頭カード以外の相対時刻を省略することがある。
+          // 最新一覧の上位カードだけ現在時刻から少しずつずらして仮配置し、0件扱いになるのを避ける。
+          publishedAt = estimateDateForUndatedItem(undatedCount);
+          dateEstimated = true;
+          undatedCount += 1;
+        }
+
         if (!publishedAt || !isCandidateArticleUrl(url, site)) continue;
 
         items.push({
           title: cleanTitle(body.replace(/\b\d+\s+(?:minutes?|mins?|hours?|days?)\s+ago\b.*$/i, "")),
           url,
           publishedAt,
+          dateEstimated,
           thumbnail: image,
           source: site.name
         });
       }
 
       return items;
+    }
+
+    // At The RacesのJina Reader一覧は「見出し -> Sunday 24 May -> 要約」の順で、記事URLだけが欠ける。
+    // 公式記事URLは /news/YYYY/Month/DD/title-slug 形式なので、日付行と見出しから復元する。
+    function extractAtTheRacesMarkdownItems(text, site) {
+      if (!text || !/At The Races News/i.test(text)) return [];
+
+      const lines = String(text).split(/\r?\n/).map((line) => cleanWhitespace(line)).filter(Boolean);
+      const startIndex = lines.findIndex((line) => /^At The Races News$/i.test(line));
+      const scanLines = startIndex >= 0 ? lines.slice(startIndex + 1) : lines;
+      const items = [];
+
+      for (let index = 0; index < scanLines.length - 1; index += 1) {
+        const parsedLine = parseAtTheRacesTitleLine(scanLines[index]);
+        const title = cleanTitle(parsedLine.title);
+        const dateText = scanLines[index + 1];
+
+        // 記事カードの日付行だけを採用する。Cookie文言やナビゲーション中の短いテキストはここで落とす。
+        if (/^send message$/i.test(title) || !isLikelyHeadline(title) || !isAtTheRacesDateLine(dateText)) continue;
+
+        const publishedAt = parseDate(dateText);
+        const url = parsedLine.url || buildAtTheRacesArticleUrl(title, publishedAt, site);
+        if (!publishedAt || !url) continue;
+
+        items.push({
+          title,
+          url,
+          publishedAt,
+          thumbnail: "",
+          source: site.name
+        });
+      }
+
+      return items;
+    }
+
+    // Jinaの状態によって、At The Racesの見出しはプレーンテキストまたは「## [見出し](URL)」になる。
+    function parseAtTheRacesTitleLine(line) {
+      const normalized = cleanWhitespace(String(line || "").replace(/^#{1,6}\s*/, ""));
+      const linked = normalized.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+      if (linked) return { title: linked[1], url: linked[2] };
+      return { title: normalized, url: "" };
+    }
+
+    // At The Races一覧の日付は曜日付きの「Sunday 24 May」形式で出る。
+    function isAtTheRacesDateLine(value) {
+      return /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*$/i.test(value || "");
+    }
+
+    // At The Racesの公式記事URLを、Jina一覧に残る見出しと日付から復元する。
+    function buildAtTheRacesArticleUrl(title, publishedAt, site) {
+      if (!title || !(publishedAt instanceof Date) || Number.isNaN(publishedAt.getTime())) return "";
+
+      const year = publishedAt.getFullYear();
+      const month = monthPathName(publishedAt.getMonth() + 1);
+      const day = String(publishedAt.getDate()).padStart(2, "0");
+      const slug = slugifyAtTheRacesTitle(title);
+      if (!slug) return "";
+
+      return absoluteUrl(`/news/${year}/${month}/${day}/${slug}`, site.baseUrl);
+    }
+
+    // At The Racesは「1,000」のカンマをURLに残すため、汎用slugifyとは別に媒体専用で変換する。
+    function slugifyAtTheRacesTitle(value) {
+      return String(value || "")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/['’]/g, "")
+        .replace(/[^a-z0-9,\s-]+/g, "")
+        .replace(/[\s-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
     }
 
     // Racenetカード本文とURLスラッグを照合し、長い説明文を見出しに混ぜないようにする。
@@ -1821,6 +1906,14 @@ const state = {
         jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
         jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
       }[key] || 1;
+    }
+
+    // URLパスに使う英語の月名を、Date#getMonth()+1から復元する。
+    function monthPathName(month) {
+      return [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+      ][Number(month) - 1] || "January";
     }
 
     // 日時が取れない最新一覧の記事を、取得順に少しずつずらして仮配置する。
