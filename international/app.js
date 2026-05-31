@@ -1308,7 +1308,12 @@ const state = {
     // Markdown見出しの近傍テキストやURLから公開日時を推定する。
     function findMarkdownDateNear(lines, index, url) {
       const fromUrl = parseDateFromUrl(url);
-      for (let offset = -2; offset <= 8; offset += 1) {
+      // Jina ReaderのMarkdownでは、見出しの直前に画像URLや画像altが並ぶことがある。
+      // Daily Racing Formのように画像ファイル名へ「05-30-26」形式の日付が入るサイトでは、
+      // 直前行を先に読むと記事公開日ではなく画像ファイル名の日付を拾ってしまう。
+      // そのため、見出し行と直後の著者・公開日メタ情報を先に確認し、最後に直前行へ戻る。
+      const offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, -1, -2];
+      for (const offset of offsets) {
         const parsed = parseDateFromText(lines[index + offset]);
         if (parsed) return parsed;
       }
