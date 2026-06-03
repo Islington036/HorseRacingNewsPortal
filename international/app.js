@@ -1199,7 +1199,15 @@ const state = {
           // Daily MailのRSSをJinaがMarkdown化すると「### [](URL)」のような空リンク見出しになることがある。
           // これは記事タイトルではなく変換ノイズなので、URLが近傍にあってもカード化しない。
           if (/^\[\]\(https?:\/\/[^)]+\)$/i.test(title)) return;
-          url = findMarkdownArticleLinkNear(lines, index, site);
+          const titleLink = parseStandaloneMarkdownLink(title);
+          if (titleLink) {
+            // Racing Postの一部カードは「##### [見出し](記事URL)」のような深い見出しで出る。
+            // 近傍の別記事リンクを拾うと見出しと遷移先がずれるため、Markdown内のURLを最優先にする。
+            title = titleLink.title;
+            url = titleLink.url;
+          } else {
+            url = findMarkdownArticleLinkNear(lines, index, site);
+          }
         }
 
         title = cleanTitle(title);
@@ -1522,8 +1530,12 @@ const state = {
 
     // 抽出元ごとのばらつきを、画面表示用の共通ニュース形式へ変換する。
     function normalizeItem(raw, site, index) {
-      const url = absoluteUrl(raw.url, site.baseUrl);
-      const title = cleanTitle(raw.title);
+      // Jina ReaderやMarkdown系抽出では、見出しそのものが `[title](url)` の形で残ることがある。
+      // その場合は表示用タイトルだけでなくURLもMarkdown内のリンク先を優先し、見出しと遷移先の食い違いを防ぐ。
+      const titleLink = parseStandaloneMarkdownLink(raw.title);
+      const sourceUrl = titleLink && isCandidateArticleUrl(titleLink.url, site) ? titleLink.url : raw.url;
+      const url = absoluteUrl(sourceUrl, site.baseUrl);
+      const title = cleanTitle(titleLink ? titleLink.title : raw.title);
       const publishedAt = raw.publishedAt instanceof Date ? raw.publishedAt : parseDate(raw.publishedAt);
 
       // JSON-LDや一覧ページの<title>から、媒体説明文やカテゴリ名が記事見出しとして紛れ込むことがある。
@@ -1976,11 +1988,23 @@ const state = {
       return [...byUrl.values()];
     }
 
+    // タイトル全体がMarkdownリンクの場合、表示文字列とリンク先URLを分離する。
+    function parseStandaloneMarkdownLink(value) {
+      const match = cleanWhitespace(value).match(/^\[([^\]]{1,500})\]\((https?:\/\/[^)]+)\)$/i);
+      if (!match) return null;
+      return {
+        title: match[1],
+        url: match[2]
+      };
+    }
+
     // 見出し末尾の媒体名や不要な導入語を除去する。
     function cleanTitle(value) {
       return cleanWhitespace(value)
         // Markdownの空リンクだけが見出しとして残った場合は、タイトル扱いせず空文字へ落とす。
         .replace(/^\[\]\(https?:\/\/[^)]+\)$/i, "")
+        // Markdownリンク全体がタイトル欄に入った場合は、表示用の文字列だけを残す。
+        .replace(/^\[([^\]]+)\]\(https?:\/\/[^)]+\)$/i, "$1")
         .replace(/\s*\|\s*(Racing Post|BloodHorse|Daily Mail Online|Daily Mail|Mirror|SCMP|Racing\.com)\s*$/i, "")
         .replace(/\s*-\s*(Horse Racing News|Racing News)\s*$/i, "")
         .replace(/^(Read more|Premium|Exclusive)\s*:?\s*/i, "")
