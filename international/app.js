@@ -287,7 +287,7 @@ const state = {
             // directFetch用のURLだけはサイト設定の追加ヘッダーを付ける。公開プロキシには余計なヘッダーを渡さない。
             // ここで「proxyUrl === sourceUrl」を条件にしておくと、プロキシ自体へRacing TV用ヘッダーを投げる事故を防げる。
             const requestHeaders = proxyUrl === sourceUrl ? site.requestHeaders || {} : {};
-            const html = await fetchProxyText(proxyUrl, requestHeaders);
+            const html = await fetchProxyText(proxyUrl, requestHeaders, requestSite.requestTimeoutMs);
             const items = parseSiteResponse(html, site);
 
             if (items.length > 0) {
@@ -338,7 +338,7 @@ const state = {
 
       for (const proxyUrl of buildProxyUrls(url, site)) {
         try {
-          return await fetchProxyText(proxyUrl);
+          return await fetchProxyText(proxyUrl, {}, site.requestTimeoutMs);
         } catch (error) {
           lastError = error;
         }
@@ -377,9 +377,11 @@ const state = {
     }
 
     // 1つのプロキシURLから本文を取得し、HTTPエラーやタイムアウトを例外化する。
-    async function fetchProxyText(proxyUrl, requestHeaders = {}) {
+    async function fetchProxyText(proxyUrl, requestHeaders = {}, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS);
+      // サイト別に待機時間を上書きできるようにする。通常は全体設定を使い、
+      // Racing TVのようにReader経由の初回応答が遅いサイトだけ個別に延長する。
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         // サイト側APIに追加ヘッダーが必要な場合は、既定Acceptよりサイト設定を優先する。
