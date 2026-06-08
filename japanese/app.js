@@ -512,7 +512,7 @@ const state = {
         try {
           // 記事ページ補完は補助処理なので、通常取得より短い上限時間で切り上げる。
           // 1サイト内では並列に走らせ、見出し補完待ちで更新全体が長く止まらないようにする。
-          const articleHtml = await fetchTextWithDeadline(item.url, CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
+          const articleHtml = await fetchTitleHydrationTextWithDeadline(item.url, CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
           const fullTitle = extractFullTitleFromArticle(articleHtml, item.title);
           return [item.url, preferFullTitle(item.title, fullTitle)];
         } catch (_error) {
@@ -529,10 +529,10 @@ const state = {
       });
     }
 
-    async function fetchTextWithDeadline(url, timeoutMs) {
-      const request = fetchText(url);
+    async function fetchTitleHydrationTextWithDeadline(url, timeoutMs) {
+      const request = fetchTitleHydrationText(url);
       request.catch(() => {
-        // Promise.raceでタイムアウトした後にfetchText側が失敗しても、未処理例外にしないための吸収。
+        // Promise.raceでタイムアウトした後に記事ページ補完側が失敗しても、未処理例外にしないための吸収。
       });
 
       return Promise.race([
@@ -541,6 +541,27 @@ const state = {
           window.setTimeout(() => reject(new Error(t("timeout"))), timeoutMs);
         })
       ]);
+    }
+
+    async function fetchTitleHydrationText(url) {
+      // 見出し補完は記事ページを読む補助処理。日刊スポーツの記事ページはAllOriginsが遅く失敗し、
+      // CodeTabsが成功しやすいため、通常取得とは別にCodeTabsを先に試して省略見出しを補完しやすくする。
+      const proxyUrls = [
+        CONFIG.CORS_PROXY(url),
+        CONFIG.CORS_PROXY_FALLBACKS[1](url),
+        CONFIG.CORS_PROXY_FALLBACKS[0](url)
+      ];
+      let lastError = null;
+
+      for (const proxyUrl of proxyUrls) {
+        try {
+          return await fetchProxyText(proxyUrl);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError || new Error(t("fetchFailed"));
     }
 
     function extractFullTitleFromArticle(html, fallbackTitle) {
@@ -569,12 +590,15 @@ const state = {
 
     function cleanArticleTitle(value) {
       return cleanTitle(value)
+        .replace(/\s*-\s*(?:海外\s*\|\s*)?競馬\s*:\s*日刊スポーツ\s*$/i, "")
         .replace(/\s*[|-]\s*(スポーツ報知|日刊スポーツ|東スポ競馬|サンスポ|SANSPO\.COM|スポニチ競馬Web|スポニチ)\s*$/i, "")
         .trim();
     }
 
     function isTruncatedTitle(title) {
-      return /…|\.{3}|‥/.test(title || "");
+      // 本文中の「……じゃなかった」のような表現は正式見出しにも含まれる。
+      // 一覧カードで末尾が省略されている場合だけ補完対象にする。
+      return /(…|\.{3}|‥)\s*$/.test(cleanArticleTitle(title));
     }
 
     function preferFullTitle(currentTitle, candidateTitle) {
