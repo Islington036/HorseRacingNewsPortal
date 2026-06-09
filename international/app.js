@@ -288,7 +288,10 @@ const state = {
             // ここで「proxyUrl === sourceUrl」を条件にしておくと、プロキシ自体へRacing TV用ヘッダーを投げる事故を防げる。
             const requestHeaders = proxyUrl === sourceUrl ? site.requestHeaders || {} : {};
             const html = await fetchProxyText(proxyUrl, requestHeaders, requestSite.requestTimeoutMs);
-            const items = parseSiteResponse(html, site);
+            const items = site.id === "paulickreport"
+              // Paulick Reportの一覧ページには日付が出ないため、記事詳細ページのメタ情報で公開日時を補完する。
+              ? await parsePaulickReportResponse(html, site)
+              : parseSiteResponse(html, site);
 
             if (items.length > 0) {
               // 1つの取得経路で記事が取れたら、そのサイトは成功扱いにする。
@@ -307,6 +310,169 @@ const state = {
       }
 
       throw lastError || new Error(t("noExtract"));
+    }
+
+    // Paulick Reportの一覧レスポンスから候補を拾い、個別記事ページのPublished Timeで日時を補完する。
+    async function parsePaulickReportResponse(rawText, site) {
+      const candidates = extractPaulickReportCandidates(rawText, site)
+        // 一覧の先頭に近いほど新しい記事なので、詳細取得数は設定上限までに絞る。
+        // すべての記事詳細を読むと公開プロキシに負荷が寄り、更新全体も遅くなる。
+        .slice(0, site.detailHydrationLimit || site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+
+      if (!candidates.length) return [];
+
+      const hydratedItems = await mapWithConcurrency(
+        candidates,
+        site.detailHydrationConcurrency || 3,
+        (candidate) => hydratePaulickReportCandidate(candidate, site)
+      );
+
+      return dedupeByUrl(
+        hydratedItems
+          .filter(Boolean)
+          .map((item, index) => normalizeItem(item, site, index))
+          .filter(Boolean)
+          .filter((item) => item.title && item.url && item.publishedAt instanceof Date && !Number.isNaN(item.publishedAt.getTime()))
+      ).slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+    }
+
+    // Paulick Reportの一覧HTMLまたはJina Markdownから、記事URL・見出し・一覧画像だけを候補として抽出する。
+    function extractPaulickReportCandidates(rawText, site) {
+      const candidates = [];
+      const text = String(rawText || "");
+
+      // Jina Readerでは「View post」リンクの直後に一覧用画像が続く形で出るため、ここから画像付き候補を作る。
+      const viewPostPattern = /\[View post:\s*([^\]]+)\]\((https?:\/\/paulickreport\.com\/news\/[^)]+)\)(?:!\[[^\]]*\]\((https?:\/\/[^)]+)\))?/gi;
+      for (const match of text.matchAll(viewPostPattern)) {
+        const title = cleanTitle(match[1]);
+        const url = match[2];
+        if (!isLikelyHeadline(title) || !isPaulickReportArticleUrl(url, site)) continue;
+        candidates.push({
+          title,
+          url,
+          thumbnail: pickUsableImage(match[3]),
+          source: site.name
+        });
+      }
+
+      // 通常HTML経由で取れた場合の保険。DOMでは日付がないため、ここでも候補だけ作って詳細補完へ回す。
+      const doc = new DOMParser().parseFromString(text, "text/html");
+      doc.querySelectorAll("a[href*='/news/']").forEach((anchor) => {
+        const url = absoluteUrl(anchor.getAttribute("href"), site.baseUrl);
+        const title = cleanTitle(anchor.textContent || anchor.getAttribute("aria-label") || anchor.getAttribute("title"));
+        if (!isLikelyHeadline(title) || !isPaulickReportArticleUrl(url, site)) return;
+
+        candidates.push({
+          title: title.replace(/^View post:\s*/i, ""),
+          url,
+          thumbnail: pickUsableImage(findImageNear(anchor, site)),
+          source: site.name
+        });
+      });
+
+      return dedupeRawItems(candidates);
+    }
+
+    // Paulick Reportのカテゴリ・View All・固定ページを除き、/news/配下の個別記事だけを許可する。
+    function isPaulickReportArticleUrl(value, site) {
+      const url = absoluteUrl(value, site.baseUrl);
+      if (!url || !isCandidateArticleUrl(url, site)) return false;
+
+      try {
+        const pathParts = new URL(url).pathname.split("/").filter(Boolean);
+        // /news/<category>/<slug> 以上の深さだけを記事扱いする。/news/the-biz のようなカテゴリ導線を落とす。
+        return pathParts[0] === "news" && pathParts.length >= 3;
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    // Paulick Reportの候補1件について、Jina Readerの個別記事出力から公開日時と実画像を補完する。
+    async function hydratePaulickReportCandidate(candidate, site) {
+      try {
+        const detailText = await fetchText(candidate.url, {
+          ...site,
+          allowTextProxy: true,
+          preferTextProxy: true,
+          textProxyOnly: true,
+          requestTimeoutMs: site.detailRequestTimeoutMs || site.requestTimeoutMs || CONFIG.REQUEST_TIMEOUT_MS
+        });
+        const detail = extractPaulickReportDetail(detailText, candidate, site);
+        const publishedAt = detail.publishedAt || candidate.publishedAt;
+
+        if (!publishedAt) return null;
+
+        return {
+          title: detail.title || candidate.title,
+          url: candidate.url,
+          publishedAt,
+          thumbnail: pickUsableImage(candidate.thumbnail, detail.thumbnail),
+          source: site.name
+        };
+      } catch (_error) {
+        // 1記事だけ詳細補完に失敗しても、媒体全体を失敗扱いにしない。
+        // 取得できた他の記事でPaulick Report欄を更新できるよう、失敗候補はnullで落とす。
+        return null;
+      }
+    }
+
+    // Jina Readerの個別記事Markdownから、Published Time・本文見出し・代表画像を抜き出す。
+    function extractPaulickReportDetail(text, candidate, site) {
+      const raw = String(text || "");
+      const publishedAt =
+        parseDateFromText((raw.match(/^Published Time:\s*(.+)$/im) || [])[1]) ||
+        parseDateFromText((raw.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+20\d{2}\s+\d{1,2}:\d{2}\s+(?:AM|PM)\s+EDT\b/i) || [])[0]);
+      const title =
+        cleanTitle((raw.match(/^Title:\s*(.+)$/im) || [])[1]) ||
+        cleanTitle((raw.match(/^#\s+(.+?)(?:\s+-\s+Paulick Report)?$/m) || [])[1]) ||
+        candidate.title;
+
+      return {
+        title,
+        publishedAt,
+        thumbnail: pickUsableImage(...extractPaulickReportDetailImages(raw, candidate, site))
+      };
+    }
+
+    // 個別記事Markdown内の画像から、候補タイトルに近い画像や本文代表画像を優先して返す。
+    function extractPaulickReportDetailImages(text, candidate, site) {
+      const images = [];
+      const imagePattern = /!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+
+      for (const match of text.matchAll(imagePattern)) {
+        const alt = cleanWhitespace(match[1]);
+        const url = match[2];
+        if (!isUsableImageValue(url)) continue;
+
+        // 見出しaltが候補タイトルに近い一覧画像、またはprofile=w2560等の本文代表画像を優先する。
+        if (alt && cleanTitle(alt).toLowerCase() === cleanTitle(candidate.title).toLowerCase()) {
+          images.unshift(url);
+        } else if (/profile=w(?:1536|2560)|ar=4-3|share16-9/i.test(url)) {
+          images.push(url);
+        }
+      }
+
+      // 一覧側で取れた画像を最後の保険として加える。詳細側が広告画像だけだった場合もダミー化を避けやすい。
+      images.push(candidate.thumbnail);
+      return images.map((image) => absoluteUrl(image, site.baseUrl));
+    }
+
+    // 少数の詳細ページを同時実行数付きで処理する。公開プロキシへの一斉アクセスを抑えるための小さなワーカー。
+    async function mapWithConcurrency(items, concurrency, iteratee) {
+      const results = new Array(items.length);
+      let nextIndex = 0;
+      const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
+
+      async function runWorker() {
+        while (nextIndex < items.length) {
+          const currentIndex = nextIndex;
+          nextIndex += 1;
+          results[currentIndex] = await iteratee(items[currentIndex], currentIndex);
+        }
+      }
+
+      await Promise.all(Array.from({ length: workerCount }, runWorker));
+      return results;
     }
 
     // 取得したレスポンスをJSON/XML/HTMLとして解釈し、サイト設定に応じた抽出結果へ正規化する。
