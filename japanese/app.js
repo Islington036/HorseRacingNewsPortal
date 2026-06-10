@@ -590,7 +590,9 @@ const state = {
 
     function cleanArticleTitle(value) {
       return cleanTitle(value)
-        .replace(/\s*-\s*(?:海外\s*\|\s*)?競馬\s*:\s*日刊スポーツ\s*$/i, "")
+        // 日刊スポーツの記事ページtitleは「- 共通 | 競馬 : 日刊スポーツ」のようにカテゴリ名が入る場合がある。
+        // カテゴリ名は媒体側のページタイトル用メタ情報なので、ポータルの見出しからは除去する。
+        .replace(/\s*-\s*(?:[^|]{1,16}\s*\|\s*)?競馬\s*:\s*日刊スポーツ\s*$/i, "")
         .replace(/\s*[|-]\s*(スポーツ報知|日刊スポーツ|東スポ競馬|サンスポ|SANSPO\.COM|スポニチ競馬Web|スポニチ)\s*$/i, "")
         .trim();
     }
