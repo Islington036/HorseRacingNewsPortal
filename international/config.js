@@ -1,4 +1,29 @@
 (function () {
+    // Racing.comはNext.js画面の静的HTMLに記事一覧を含めず、公式フロントエンドがGraphQLから取得している。
+    // 公式JSに含まれている公開フロントエンド用キーと同じ経路を使い、GitHub Pages上のブラウザから直接読む。
+    const RACING_COM_PUBLIC_API_KEY = "da2-r5s52y73i5c7vi6vxflvfdufsa";
+    const RACING_COM_NEWS_QUERY = [
+      "query GetNewsList {",
+      "  getNewsList(sites: [\"RDC\"], limit: 20) {",
+      "    id",
+      "    name",
+      "    short_title",
+      "    description",
+      "    article_type",
+      "    image_url",
+      "    thumbnail",
+      "    published",
+      "    modified",
+      "    article_date",
+      "    page_url",
+      "    site",
+      "    category { label url }",
+      "    image_object { width height alt src thumbnail_src }",
+      "    thumbnail_object { width height alt src thumbnail_src }",
+      "  }",
+      "}"
+    ].join("\n");
+
     // ===== カスタマイズ用設定 =====
     const CONFIG = {
       DAYS_BACK: 3,
@@ -50,7 +75,7 @@
         { id: "tdn_america", name: "TDN America", region: "america", url: "https://www.thoroughbreddailynews.com/category/news/", feedUrl: "https://www.thoroughbreddailynews.com/category/news/feed/", baseUrl: "https://www.thoroughbreddailynews.com", parser: "generic", pathHints: ["/category/news/"], includeAnySameHost: true },
         { id: "drf", name: "Daily Racing Form", region: "america", url: "https://www.drf.com/news/all-news", baseUrl: "https://www.drf.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
         { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: true, requireMarkdownImage: true, detailHydrationLimit: 18, detailHydrationConcurrency: 4, detailRequestTimeoutMs: 20000 },
-        { id: "racing_com", name: "Racing.com", region: "australia", url: "https://www.racing.com/news/latest-news", baseUrl: "https://www.racing.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
+        { id: "racing_com", name: "Racing.com", region: "australia", url: "https://www.racing.com/news/latest-news", apiUrl: "https://graphql.api.racing.com?query=" + encodeURIComponent(RACING_COM_NEWS_QUERY), baseUrl: "https://www.racing.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: false, tryDirect: true, requestHeaders: { "x-api-key": RACING_COM_PUBLIC_API_KEY, "content-type": "application/json;charset=UTF-8" } },
         { id: "racenet", name: "Racenet", region: "australia", url: "https://www.racenet.com.au/news", baseUrl: "https://www.racenet.com.au", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
         { id: "anzbloodstock", name: "ANZ Bloodstock News", region: "australia", url: "https://www.anzbloodstocknews.com/category/latest-news/", baseUrl: "https://www.anzbloodstocknews.com", parser: "generic", pathHints: ["/category/latest-news/"], includeAnySameHost: true, preferTextProxy: true },
         { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathHints: ["/edition/", "/news/", "/articles/"], includeAnySameHost: true, preferTextProxy: false },
