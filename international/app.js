@@ -610,7 +610,7 @@ const state = {
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
       if (site.id === "thestraight") return extractTheStraightApiItems(data, site);
       if (site.id === "bloodhorse") return extractBloodHorseItems(doc, site);
-      if (site.id === "racing_com") return extractRacingComMarkdownItems(rawText, site);
+      if (site.id === "racing_com") return [...extractRacingComGraphqlItems(data, site), ...extractRacingComMarkdownItems(rawText, site)];
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
       return [];
     }
@@ -1215,6 +1215,32 @@ const state = {
       const slugWords = fromSlug.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
       const matchedWords = slugWords.filter((word) => bodyPrefix.includes(word)).length;
       return matchedWords >= Math.min(4, slugWords.length) ? fromSlug : cleanTitle(body);
+    }
+
+    // Racing.com公式GraphQLのJSONから、見出し・日時・実写真URLを安定して取り出す。
+    function extractRacingComGraphqlItems(data, site) {
+      const articles = data && data.data && Array.isArray(data.data.getNewsList)
+        ? data.data.getNewsList
+        : [];
+
+      return articles.map((article) => {
+        // 公式APIでは一般的なcamelCaseではなく、short_title/page_url/article_date/image_urlを使う。
+        // 汎用JSON抽出へ任せるとURLや日時を落としやすいので、このサイトだけ明示的に対応する。
+        const url = absoluteUrl(pickFirst(article.page_url, article.url, article.path), site.baseUrl);
+        if (!url || !isCandidateArticleUrl(url, site)) return null;
+
+        return buildRawNewsItem(site, {
+          title: pickFirst(article.short_title, article.name, article.title, article.description),
+          url,
+          publishedAt: parseDate(pickFirst(article.article_date, article.published, article.modified)),
+          thumbnail: pickUsableImage(
+            article.image_url,
+            article.thumbnail,
+            article.image_object && pickFirst(article.image_object.src, article.image_object.thumbnail_src),
+            article.thumbnail_object && pickFirst(article.thumbnail_object.src, article.thumbnail_object.thumbnail_src)
+          )
+        });
+      }).filter(Boolean);
     }
 
     // Racing.comのJina Reader出力から、実写真・見出し・相対時刻・記事URLを1カードとして抽出する。
