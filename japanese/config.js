@@ -5,7 +5,7 @@
       MIN_DAYS_BACK: 1,
       MAX_DAYS_BACK: 3,
       REQUEST_TIMEOUT_MS: 9000,
-      TITLE_HYDRATION_TIMEOUT_MS: 12000,
+      TITLE_HYDRATION_TIMEOUT_MS: 20000,
       CACHE_KEY: "keiba-news-portal-cache-v2",
       SETTINGS_KEY: "keiba-news-portal-settings-v1",
       FALLBACK_THUMBNAIL:
@@ -20,6 +20,9 @@
         (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
         (url) => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(url)
       ],
+      TEXT_PROXY(url) {
+        return "https://r.jina.ai/" + url;
+      },
       SITES: [
         {
           id: "hochi",
