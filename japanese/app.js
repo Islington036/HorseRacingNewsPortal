@@ -547,6 +547,7 @@ const state = {
       // 見出し補完は記事ページを読む補助処理。日刊スポーツの記事ページはAllOriginsが遅く失敗し、
       // CodeTabsが成功しやすいため、通常取得とは別にCodeTabsを先に試して省略見出しを補完しやすくする。
       const proxyUrls = [
+        CONFIG.TEXT_PROXY(url),
         CONFIG.CORS_PROXY(url),
         CONFIG.CORS_PROXY_FALLBACKS[1](url),
         CONFIG.CORS_PROXY_FALLBACKS[0](url)
@@ -567,6 +568,7 @@ const state = {
     function extractFullTitleFromArticle(html, fallbackTitle) {
       const doc = new DOMParser().parseFromString(html, "text/html");
       const candidates = [
+        extractReaderTitleCandidate(html),
         doc.querySelector("meta[property='og:title']") && doc.querySelector("meta[property='og:title']").getAttribute("content"),
         doc.querySelector("meta[name='twitter:title']") && doc.querySelector("meta[name='twitter:title']").getAttribute("content"),
         doc.querySelector("h1") && doc.querySelector("h1").textContent,
@@ -588,6 +590,17 @@ const state = {
         .find((candidate) => preferFullTitle(fallbackTitle, candidate) === candidate) || "";
     }
 
+    function extractReaderTitleCandidate(value) {
+      // Jina ReaderはHTMLではなくMarkdown風テキストを返すため、DOMParserだけでは見出し候補を拾えない。
+      // 先頭のTitle行を最優先し、無い場合は本文冒頭のMarkdown見出しを補完候補にする。
+      const text = String(value || "");
+      const titleMatch = text.match(/^Title:\s*(.+)$/im);
+      if (titleMatch) return titleMatch[1];
+
+      const headingMatch = text.match(/^#\s+(.+)$/m);
+      return headingMatch ? headingMatch[1] : "";
+    }
+
     function cleanArticleTitle(value) {
       return cleanTitle(value)
         // 日刊スポーツの記事ページtitleは「- 共通 | 競馬 : 日刊スポーツ」のようにカテゴリ名が入る場合がある。
@@ -598,9 +611,9 @@ const state = {
     }
 
     function isTruncatedTitle(title) {
-      // 本文中の「……じゃなかった」のような表現は正式見出しにも含まれる。
-      // 一覧カードで末尾が省略されている場合だけ補完対象にする。
-      return /(…|\.{3}|‥)\s*$/.test(cleanArticleTitle(title));
+      // 日刊スポーツは「馬名…／レース名」のように、末尾以外にも一覧専用の省略記号を入れる。
+      // 正式見出しにも三点リーダーが残る場合はpreferFullTitle側で採用しないため、候補抽出は広めに行う。
+      return /(…|\.{3}|‥)/.test(cleanArticleTitle(title));
     }
 
     function preferFullTitle(currentTitle, candidateTitle) {
@@ -608,8 +621,20 @@ const state = {
       const candidate = cleanArticleTitle(candidateTitle);
       if (!candidate || !isLikelyHeadline(candidate)) return current;
 
-      // 省略記号が残る候補は一覧と同じ可能性が高いので、完全タイトルとしては採用しない。
-      if (isTruncatedTitle(candidate)) return current;
+      // 省略記号が残る候補でも、記事ページ側の正式見出しに会話文として「…」が入る場合がある。
+      // 一覧より明らかに長い場合は記事ページ候補を採用し、同程度なら一覧の省略見出しとみなして戻す。
+      if (isTruncatedTitle(candidate)) {
+        const currentWithoutMarks = current.replace(/…|\.{3}|‥/g, "");
+        const candidateWithoutMarks = candidate.replace(/…|\.{3}|‥/g, "");
+        if (
+          isTruncatedTitle(current) &&
+          candidate.length >= current.length + 4 &&
+          candidateWithoutMarks.length > currentWithoutMarks.length
+        ) {
+          return candidate;
+        }
+        return current;
+      }
 
       // 現在タイトルが省略されていて、候補の方が十分長ければ記事ページ側を優先する。
       if (isTruncatedTitle(current) && candidate.length >= current.replace(/…|\.{3}|‥/g, "").length) {
