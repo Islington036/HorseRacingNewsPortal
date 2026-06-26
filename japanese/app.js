@@ -221,9 +221,9 @@ const state = {
       throw lastError || new Error(t("fetchFailed"));
     }
 
-    async function fetchProxyText(proxyUrl) {
+    async function fetchProxyText(proxyUrl, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS);
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const response = await fetch(proxyUrl, {
@@ -556,7 +556,7 @@ const state = {
 
       for (const proxyUrl of proxyUrls) {
         try {
-          return await fetchProxyText(proxyUrl);
+          return await fetchProxyText(proxyUrl, CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
         } catch (error) {
           lastError = error;
         }
