@@ -321,6 +321,49 @@ export function parseWordPressPosts(text) {
   });
 }
 
+// The Irish Fieldの第一者JSON APIから、見出し・記事URL・公開日時・S3画像URLを復元する。
+// 公開プロキシ不調時にJina ReaderがJSONを説明文付きで返すため、JSON本体だけを安全に切り出す。
+export function parseIrishFieldTopic(text) {
+  const data = parseJsonPayload(text);
+  const articles = data && data.fjapp && Array.isArray(data.fjapp.api)
+    ? data.fjapp.api
+    : data && Array.isArray(data.api)
+      ? data.api
+      : [];
+
+  return articles.map((article) => ({
+    title: firstValue(article.ctitle, article.title, article.name),
+    url: firstValue(article.hspermlink, article.permalink, article.url),
+    publishedAt: firstValue(article.releasedate, article.modified, article.date),
+    thumbnail: buildIrishFieldImageUrl(article)
+  }));
+}
+
+// Readerのヘッダーより後ろにあるJSONオブジェクトを取り出し、通常JSONと同じパーサーへ渡す。
+function parseJsonPayload(text) {
+  const raw = String(text || "").trim();
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("JSON本文を取得できませんでした");
+    return JSON.parse(raw.slice(start, end + 1));
+  }
+}
+
+// APIが分割保持する画像ディレクトリとファイル名を、配信用S3 URLへ結合する。
+function buildIrishFieldImageUrl(article) {
+  const direct = firstValue(article.image, article.thumbnail, article.thumbnailUrl, article.mainImage);
+  if (direct) return direct;
+
+  const imagePath = firstValue(article.imagePath, article.imagepath, article.TLImagePath, article.path);
+  const fileName = firstValue(article.TLThumb, article.tlthumb, article.thumb, article.fileName, article.filename);
+  return imagePath && fileName
+    ? `https://s3-eu-west-1.amazonaws.com/theirishfield/WEBFILES/${String(imagePath).replace(/^\/+/, "")}${fileName}`
+    : "";
+}
+
 // 媒体別パーサーの出力を、テストUIが扱う共通形式へ正規化する。
 function normalizeItem(item, source) {
   if (!item || typeof item !== "object") return null;
