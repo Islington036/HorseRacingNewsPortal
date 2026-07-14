@@ -130,12 +130,27 @@ button:disabled {
   background: #fff;
 }
 
-.result-card img {
+.result-card img,
+.result-placeholder {
   width: 144px;
   height: 100%;
   min-height: 96px;
+}
+
+.result-card img {
   object-fit: cover;
   background: #dfe9e0;
+}
+
+.result-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  background: #dfe9e0;
+  color: #385347;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .result-body {
@@ -167,7 +182,8 @@ button:disabled {
     grid-template-columns: 104px minmax(0, 1fr);
   }
 
-  .result-card img {
+  .result-card img,
+  .result-placeholder {
     width: 104px;
   }
 }

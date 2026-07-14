@@ -29,9 +29,10 @@ export async function runSourceTest(source) {
 
   const validTitleLinks = checkedItems.filter((item) => item.title && isHttpUrl(item.url)).length;
   const datedItems = checkedItems.filter((item) => item.publishedAt && !Number.isNaN(item.publishedAt.getTime())).length;
-  const thumbnailItems = checkedItems.filter((item) => isHttpUrl(item.thumbnail)).length;
-  const loadedImages = checkedItems.filter((item) => item.imageLoaded).length;
   const itemCount = checkedItems.length;
+  const thumbnailItems = checkedItems.filter((item) => isHttpUrl(item.thumbnail)).length;
+  const missingThumbnails = itemCount - thumbnailItems;
+  const loadedImages = checkedItems.filter((item) => item.imageLoaded).length;
   const minimumItems = source.minimumItems || 1;
   const minimumImageCoverage = source.minimumImageCoverage ?? 0.75;
   const imageCoverage = itemCount ? loadedImages / itemCount : 0;
@@ -44,13 +45,16 @@ export async function runSourceTest(source) {
     validTitleLinks,
     datedItems,
     thumbnailItems,
+    missingThumbnails,
     loadedImages,
     imageCoverage,
     passed:
       itemCount >= minimumItems &&
       validTitleLinks === itemCount &&
       (!source.requireDate || datedItems === itemCount) &&
-      imageCoverage >= minimumImageCoverage,
+      imageCoverage >= minimumImageCoverage &&
+      // URLが配信された画像は全件読めることを要求し、画像URL自体がない記事とは別に判定する。
+      loadedImages === thumbnailItems,
     items: checkedItems
   };
 }

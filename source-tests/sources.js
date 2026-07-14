@@ -54,5 +54,17 @@ export const SOURCES = [
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
+  },
+  {
+    id: "the_straight_wordpress",
+    name: "The Straight WordPress REST",
+    url: "https://thestraight.com.au/wp-json/wp/v2/posts?per_page=20&_embed=1",
+    baseUrl: "https://thestraight.com.au",
+    parse: parseWordPressPosts,
+    tryDirect: true,
+    requireDate: true,
+    minimumItems: 1,
+    // 現在の先頭記事にはfeatured_media未設定が含まれるため、存在する画像が全て読める50%を基準にする。
+    minimumImageCoverage: 0.5
   }
 ];
