@@ -268,7 +268,14 @@ const state = {
     async function fetchSite(site) {
       // apiUrl/feedUrl/urlの順で試す。APIやRSSがあるサイトはHTMLより構造が安定しやすいため優先する。
       // Setで包んでいるのは、設定ミスで同じURLが複数入った場合に無駄な外部アクセスを避けるため。
-      const sourceUrls = [...new Set([site.apiUrl, site.feedUrl, site.url].filter(Boolean))];
+      // structuredSourcesOnlyの媒体は、API/RSS障害時に一覧HTMLへ落とさない。
+      // 一覧HTMLの広告日付やイベント日付を記事日時と誤認して「期間内記事なし」にするより、
+      // 取得失敗として前回キャッシュを維持する方が、ユーザーへ正しい状態を伝えられるためである。
+      const sourceUrls = [...new Set([
+        site.apiUrl,
+        site.feedUrl,
+        site.structuredSourcesOnly ? null : site.url
+      ].filter(Boolean))];
       let lastError = null;
 
       for (const sourceUrl of sourceUrls) {
@@ -608,8 +615,12 @@ const state = {
       if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
-      // ANZ BloodstockとThe Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
-      if (site.id === "anzbloodstock" || site.id === "thestraight") return extractWordPressApiItems(data, site);
+      // TDN、ANZ Bloodstock、The Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
+      // TDNはRSSを予備経路として残しており、RSSレスポンス時はdataがnullになるため空配列を返す。
+      // その場合もPARSERS.generic側のextractFeedItemsが続けてRSSを抽出する。
+      if (["tdn_europe", "tdn_america", "anzbloodstock", "thestraight"].includes(site.id)) {
+        return extractWordPressApiItems(data, site);
+      }
       if (site.id === "bloodhorse") return extractBloodHorseItems(doc, site);
       if (site.id === "racing_com") return [...extractRacingComGraphqlItems(data, site), ...extractRacingComMarkdownItems(rawText, site)];
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
