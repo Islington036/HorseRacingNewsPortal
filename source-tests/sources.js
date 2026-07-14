@@ -25,21 +25,49 @@ export const SOURCES = [
     minimumImageCoverage: 0.75
   },
   {
-    id: "tdn_europe_rss",
-    name: "TDN Europe RSS",
-    url: "https://www.thoroughbreddailynews.com/category/news-europe/feed/",
+    id: "tdn_europe_wordpress",
+    name: "TDN Europe WordPress REST",
+    url: "https://www.thoroughbreddailynews.com/wp-json/wp/v2/posts?categories=7479&per_page=20&_embed=1",
     baseUrl: "https://www.thoroughbreddailynews.com",
-    parse: parseFeed,
+    parse: parseWordPressPosts,
+    // TDNのREST APIはCORSを許可しているため、公開プロキシより先にブラウザから直接取得する。
+    tryDirect: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
   },
   {
-    id: "tdn_america_rss",
-    name: "TDN America RSS",
+    id: "tdn_america_wordpress",
+    name: "TDN America WordPress REST",
+    url: "https://www.thoroughbreddailynews.com/wp-json/wp/v2/posts?categories=1&per_page=20&_embed=1",
+    baseUrl: "https://www.thoroughbreddailynews.com",
+    parse: parseWordPressPosts,
+    // Europe版と同じく、ローカルHTMLのOriginを返す公式CORS経路を第一候補にする。
+    tryDirect: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
+  },
+  {
+    id: "tdn_europe_rss_fallback",
+    name: "TDN Europe RSS（予備経路）",
+    url: "https://www.thoroughbreddailynews.com/category/news-europe/feed/",
+    baseUrl: "https://www.thoroughbreddailynews.com",
+    parse: parseFeed,
+    // 本体と同じく直接取得を先に試し、RSSがCORSを許可しない場合は公開プロキシへ進む。
+    tryDirect: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
+  },
+  {
+    id: "tdn_america_rss_fallback",
+    name: "TDN America RSS（予備経路）",
     url: "https://www.thoroughbreddailynews.com/category/news/feed/",
     baseUrl: "https://www.thoroughbreddailynews.com",
     parse: parseFeed,
+    // Europe版と同じ条件でRSSの見出し・リンク・日時・画像が保たれているかを確認する。
+    tryDirect: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
@@ -50,9 +78,24 @@ export const SOURCES = [
     url: "https://www.anzbloodstocknews.com/wp-json/wp/v2/posts?categories=67&per_page=20&_embed=1",
     baseUrl: "https://www.anzbloodstocknews.com",
     parse: parseWordPressPosts,
+    // ANZのREST APIもOrigin反射型CORSに対応しており、直接取得ならプロキシ混雑の影響を受けない。
+    tryDirect: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
+  },
+  {
+    id: "anzbloodstock_rss_fallback",
+    name: "ANZ Bloodstock RSS（予備経路）",
+    url: "https://www.anzbloodstocknews.com/category/latest-news/feed/",
+    baseUrl: "https://www.anzbloodstocknews.com",
+    parse: parseFeed,
+    // RESTが直接取得・公開プロキシとも失敗した場合に備え、構造化されたRSSだけを予備経路にする。
+    tryDirect: true,
+    requireDate: true,
+    minimumItems: 1,
+    // ANZのRSSは記事画像を配信しないため、画像URLがない全件を本体のダミー表示へ回せれば合格とする。
+    minimumImageCoverage: 0
   },
   {
     id: "the_straight_wordpress",
