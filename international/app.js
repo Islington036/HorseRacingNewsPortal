@@ -286,7 +286,14 @@ const state = {
           // RSS/APIをJina Readerへ渡すとXML/JSON構造がMarkdown化され、空リンク見出しなどのノイズが混ざる。
           // Jinaは公式ページHTMLを読む最後の手段としてだけ使う。
           allowTextProxy: sourceUrl === site.url,
-          preferTextProxy: sourceUrl === site.url ? site.preferTextProxy : false
+          preferTextProxy: sourceUrl === site.url ? site.preferTextProxy : false,
+          // HTTP 200のエラーページをJSON/RSSとして誤って成功扱いしないよう、候補URLごとの形式を記録する。
+          expectedResponseType:
+            sourceUrl === site.apiUrl
+              ? "json"
+              : sourceUrl === site.feedUrl
+                ? "xml"
+                : "html"
         };
 
         for (const proxyUrl of buildProxyUrls(sourceUrl, requestSite)) {
@@ -298,7 +305,7 @@ const state = {
             const items = site.id === "paulickreport"
               // Paulick Reportの一覧ページには日付が出ないため、記事詳細ページのメタ情報で公開日時を補完する。
               ? await parsePaulickReportResponse(html, site)
-              : parseSiteResponse(html, site);
+              : parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
               // 1つの取得経路で記事が取れたら、そのサイトは成功扱いにする。
@@ -484,19 +491,33 @@ const state = {
 
     // 取得したレスポンスをJSON/XML/HTMLとして解釈し、サイト設定に応じた抽出結果へ正規化する。
     function parseSiteResponse(html, site) {
+      // BOMを除去して先頭判定を安定させる。公開プロキシがXML宣言の前へBOMを付けてもRSSとして扱える。
+      const responseText = String(html || "").replace(/^\uFEFF/, "");
       // WordPress RESTやRacing TV APIなど、レスポンス全体がJSONの場合はここでオブジェクト化する。
       // JSONでない場合はnullのままにして、HTML/XMLとしてDOMParserへ渡す。
-      const json = safeJsonParse(html);
+      const json = safeJsonParse(responseText);
+      if (site.expectedResponseType === "json" && !json) {
+        // API URLがWAFやプロキシのHTMLエラーページを200で返した場合、汎用HTML抽出へ流さず次の経路へ進む。
+        throw new Error("APIレスポンスをJSONとして解析できませんでした");
+      }
       // RSS/AtomはHTMLパーサーで読むとitem/pubDate等の扱いが崩れるため、XMLとして読む。
-      const isXml = !json && /^\s*(<\?xml|<rss|<feed)/i.test(html);
+      const isXml = !json && /^\s*(<\?xml|<rss|<feed)/i.test(responseText);
+      if (site.expectedResponseType === "xml" && !isXml) {
+        // RSS URLからHTMLや空本文が返った場合も、記事候補の誤抽出を避けて別プロキシへフォールバックする。
+        throw new Error("RSSレスポンスをXMLとして解析できませんでした");
+      }
       // JSONサイトでも後段の関数シグネチャを揃えるため、空のHTML Documentを作って渡す。
       // これにより「docを使う抽出」と「dataを使う抽出」を同じparser配列で扱える。
       const doc = json
         ? new DOMParser().parseFromString("<!doctype html><html><body></body></html>", "text/html")
-        : new DOMParser().parseFromString(html, isXml ? "application/xml" : "text/html");
+        : new DOMParser().parseFromString(responseText, isXml ? "application/xml" : "text/html");
+      if (isXml && doc.querySelector("parsererror")) {
+        // 先頭がXMLでも本文が壊れているケースを明示的に失敗させ、空配列による原因不明表示を防ぐ。
+        throw new Error("RSSレスポンスをXMLとして解析できませんでした");
+      }
       const parser = PARSERS[site.parser] || PARSERS.generic;
       return dedupeByUrl(
-        parser(doc, site, html, json)
+        parser(doc, site, responseText, json)
           // 各抽出器が返すバラバラの形式を、sourceId/region/thumbnail付きの共通形式へ変換する。
           .map((item, index) => normalizeItem(item, site, index))
           // 日付がDateとして確定しない記事は、3日以内判定ができないためここで落とす。

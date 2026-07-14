@@ -49,6 +49,28 @@ export const SOURCES = [
     minimumImageCoverage: 0.75
   },
   {
+    id: "tdn_europe_rss_fallback",
+    name: "TDN Europe RSS（予備経路）",
+    url: "https://www.thoroughbreddailynews.com/category/news-europe/feed/",
+    baseUrl: "https://www.thoroughbreddailynews.com",
+    parse: parseFeed,
+    // 本体ではRESTが全経路で失敗した場合だけ使うため、直接取得を試さず公開プロキシ経由を検証する。
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
+  },
+  {
+    id: "tdn_america_rss_fallback",
+    name: "TDN America RSS（予備経路）",
+    url: "https://www.thoroughbreddailynews.com/category/news/feed/",
+    baseUrl: "https://www.thoroughbreddailynews.com",
+    parse: parseFeed,
+    // Europe版と同じ条件でRSSの見出し・リンク・日時・画像が保たれているかを確認する。
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
+  },
+  {
     id: "anzbloodstock_wordpress",
     name: "ANZ Bloodstock WordPress REST",
     url: "https://www.anzbloodstocknews.com/wp-json/wp/v2/posts?categories=67&per_page=20&_embed=1",
@@ -59,6 +81,18 @@ export const SOURCES = [
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
+  },
+  {
+    id: "anzbloodstock_rss_fallback",
+    name: "ANZ Bloodstock RSS（予備経路）",
+    url: "https://www.anzbloodstocknews.com/category/latest-news/feed/",
+    baseUrl: "https://www.anzbloodstocknews.com",
+    parse: parseFeed,
+    // RESTが直接取得・公開プロキシとも失敗した場合に備え、構造化されたRSSだけを予備経路にする。
+    requireDate: true,
+    minimumItems: 1,
+    // ANZのRSSは記事画像を配信しないため、画像URLがない全件を本体のダミー表示へ回せれば合格とする。
+    minimumImageCoverage: 0
   },
   {
     id: "the_straight_wordpress",
