@@ -109,20 +109,23 @@ async function fetchText(url, options = {}) {
   }
 }
 
-// RSS 2.0とAtomの共通項目を読み、媒体別処理なしでカード用データへ変換する。
+// 海外版本体と同じ優先順でRSS項目を読み、カード用データへ変換する。
 export function parseFeed(text, source) {
   const doc = new DOMParser().parseFromString(text, "application/xml");
-  if (doc.querySelector("parsererror")) throw new Error("RSS/AtomをXMLとして解析できませんでした");
+  if (doc.querySelector("parsererror")) throw new Error("RSSをXMLとして解析できませんでした");
 
   return [...doc.querySelectorAll("item, entry")].map((entry) => {
-    const linkElement = entry.querySelector("link[rel='alternate'], link:not([rel]), link");
-    const description = textOf(entry, "content\\:encoded, description, summary, content");
+    const linkElement = entry.querySelector("link");
+    const description = firstValue(
+      textOf(entry, "content\\:encoded"),
+      textOf(entry, "description"),
+      textOf(entry, "summary")
+    );
     const thumbnail = firstValue(
+      textOf(entry, "image"),
       attrOf(entry, "media\\:content", "url"),
       attrOf(entry, "media\\:thumbnail", "url"),
-      attrOf(entry, "enclosure[type^='image']", "url"),
-      attrOf(entry, "link[rel='enclosure'][type^='image']", "href"),
-      textOf(entry, "image"),
+      attrOf(entry, "enclosure", "url"),
       imageFromHtml(description)
     );
 
@@ -139,6 +142,31 @@ export function parseFeed(text, source) {
         textOf(entry, "dc\\:date")
       ),
       thumbnail
+    };
+  });
+}
+
+// 日本版本体と同じlocalName基準でAtom entryを読み、alternateリンクと画像enclosureを分離する。
+export function parseAtom(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("AtomをXMLとして解析できませんでした");
+
+  return [...doc.getElementsByTagNameNS("*", "entry")].map((entry) => {
+    const links = [...entry.getElementsByTagNameNS("*", "link")];
+    const articleLink =
+      links.find((link) => (link.getAttribute("rel") || "alternate") === "alternate") ||
+      links.find((link) => link.getAttribute("href"));
+    const imageLink = links.find((link) => {
+      const rel = link.getAttribute("rel");
+      const type = link.getAttribute("type") || "";
+      return rel === "enclosure" && type.startsWith("image/");
+    });
+
+    return {
+      title: textByLocalName(entry, "title"),
+      url: articleLink && (articleLink.getAttribute("href") || articleLink.textContent),
+      publishedAt: firstValue(textByLocalName(entry, "published"), textByLocalName(entry, "updated")),
+      thumbnail: imageLink && imageLink.getAttribute("href")
     };
   });
 }
@@ -161,9 +189,10 @@ export function parseWordPressPosts(text) {
       url: post && post.link,
       publishedAt: post && post.date_gmt ? `${post.date_gmt}Z` : post && post.date,
       thumbnail: firstValue(
+        sizes["indiegraf-post-grid-medium"] && sizes["indiegraf-post-grid-medium"].source_url,
+        sizes["post-thumbnail"] && sizes["post-thumbnail"].source_url,
         sizes.medium_large && sizes.medium_large.source_url,
         sizes.medium && sizes.medium.source_url,
-        sizes["post-thumbnail"] && sizes["post-thumbnail"].source_url,
         media && media.source_url
       )
     };
@@ -209,6 +238,11 @@ function canLoadImage(url, timeoutMs = 8000) {
 
 function textOf(root, selector) {
   const element = root.querySelector(selector);
+  return element ? cleanText(element.textContent) : "";
+}
+
+function textByLocalName(root, localName) {
+  const element = root.getElementsByTagNameNS("*", localName)[0];
   return element ? cleanText(element.textContent) : "";
 }
 
