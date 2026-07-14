@@ -1,8 +1,20 @@
-import { parseAtom, parseFeed, parseNewsSitemap, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseFeed, parseIrishFieldTopic, parseNewsSitemap, parseWordPressPosts } from "./core.js";
 
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "irishfield_topic_api",
+    name: "The Irish Field Topic API",
+    url: "https://api2.theirishfield.ie/v1/channel/topic.php?id=82&level=1&limit=18&offset=0",
+    baseUrl: "https://www.theirishfield.ie",
+    parse: parseIrishFieldTopic,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
   {
     id: "racingpost_news_sitemap",
     name: "Racing Post News Sitemap",

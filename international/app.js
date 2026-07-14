@@ -288,17 +288,22 @@ const state = {
           // Jinaは公式ページHTMLを読む最後の手段としてだけ使う。
           allowTextProxy:
             sourceUrl === site.url ||
-            (sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy),
+            (sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy) ||
+            (sourceUrl === site.apiUrl && site.allowApiTextProxy),
           preferTextProxy:
             sourceUrl === site.url
               ? site.preferTextProxy
               : sourceUrl === site.sitemapUrl
                 ? site.preferSitemapTextProxy
-                : false,
+                : sourceUrl === site.apiUrl
+                  ? site.preferApiTextProxy
+                  : false,
           // HTTP 200のエラーページをJSON/RSSとして誤って成功扱いしないよう、候補URLごとの形式を記録する。
           expectedResponseType:
             sourceUrl === site.apiUrl
-              ? "json"
+              ? site.allowApiTextProxy
+                ? "json-or-reader"
+                : "json"
               : sourceUrl === site.feedUrl || sourceUrl === site.sitemapUrl
                 ? sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy
                   ? "xml-or-reader"
@@ -505,10 +510,14 @@ const state = {
       const responseText = String(html || "").replace(/^\uFEFF/, "");
       // WordPress RESTやRacing TV APIなど、レスポンス全体がJSONの場合はここでオブジェクト化する。
       // JSONでない場合はnullのままにして、HTML/XMLとしてDOMParserへ渡す。
-      const json = safeJsonParse(responseText);
+      const json = safeJsonParse(responseText) ||
+        (site.expectedResponseType === "json-or-reader" ? parseReaderWrappedJson(responseText) : null);
       if (site.expectedResponseType === "json" && !json) {
         // API URLがWAFやプロキシのHTMLエラーページを200で返した場合、汎用HTML抽出へ流さず次の経路へ進む。
         throw new Error("APIレスポンスをJSONとして解析できませんでした");
+      }
+      if (site.expectedResponseType === "json-or-reader" && !json) {
+        throw new Error("APIレスポンスからJSON本文を解析できませんでした");
       }
       // RSS/AtomはHTMLパーサーで読むとitem/pubDate等の扱いが崩れるため、XMLとして読む。
       const isXml = !json && /^\s*(<\?xml|<rss|<feed)/i.test(responseText);
@@ -538,6 +547,16 @@ const state = {
           .filter(Boolean)
           .filter((item) => item.title && item.url && item.publishedAt instanceof Date && !Number.isNaN(item.publishedAt.getTime()))
       ).slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+    }
+
+    // Jina ReaderがAPI JSONの前へ説明ヘッダーを付けた場合に、最外のJSON本文だけを復元する。
+    // HTMLや任意テキストをJSONとして誤認しないよう、最初の{から最後の}までをJSON.parseできた場合だけ採用する。
+    function parseReaderWrappedJson(value) {
+      const raw = String(value || "");
+      const start = raw.indexOf("{");
+      const end = raw.lastIndexOf("}");
+      if (start < 0 || end <= start) return null;
+      return safeJsonParse(raw.slice(start, end + 1));
     }
 
     // 任意URLを設定済みプロキシ経由で取得し、テキスト本文だけを返す補助関数。
