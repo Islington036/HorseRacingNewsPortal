@@ -268,7 +268,14 @@ const state = {
     async function fetchSite(site) {
       // apiUrl/feedUrl/urlの順で試す。APIやRSSがあるサイトはHTMLより構造が安定しやすいため優先する。
       // Setで包んでいるのは、設定ミスで同じURLが複数入った場合に無駄な外部アクセスを避けるため。
-      const sourceUrls = [...new Set([site.apiUrl, site.feedUrl, site.url].filter(Boolean))];
+      // structuredSourcesOnlyの媒体は、API/RSS障害時に一覧HTMLへ落とさない。
+      // 一覧HTMLの広告日付やイベント日付を記事日時と誤認して「期間内記事なし」にするより、
+      // 取得失敗として前回キャッシュを維持する方が、ユーザーへ正しい状態を伝えられるためである。
+      const sourceUrls = [...new Set([
+        site.apiUrl,
+        site.feedUrl,
+        site.structuredSourcesOnly ? null : site.url
+      ].filter(Boolean))];
       let lastError = null;
 
       for (const sourceUrl of sourceUrls) {
@@ -279,7 +286,14 @@ const state = {
           // RSS/APIをJina Readerへ渡すとXML/JSON構造がMarkdown化され、空リンク見出しなどのノイズが混ざる。
           // Jinaは公式ページHTMLを読む最後の手段としてだけ使う。
           allowTextProxy: sourceUrl === site.url,
-          preferTextProxy: sourceUrl === site.url ? site.preferTextProxy : false
+          preferTextProxy: sourceUrl === site.url ? site.preferTextProxy : false,
+          // HTTP 200のエラーページをJSON/RSSとして誤って成功扱いしないよう、候補URLごとの形式を記録する。
+          expectedResponseType:
+            sourceUrl === site.apiUrl
+              ? "json"
+              : sourceUrl === site.feedUrl
+                ? "xml"
+                : "html"
         };
 
         for (const proxyUrl of buildProxyUrls(sourceUrl, requestSite)) {
@@ -291,7 +305,7 @@ const state = {
             const items = site.id === "paulickreport"
               // Paulick Reportの一覧ページには日付が出ないため、記事詳細ページのメタ情報で公開日時を補完する。
               ? await parsePaulickReportResponse(html, site)
-              : parseSiteResponse(html, site);
+              : parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
               // 1つの取得経路で記事が取れたら、そのサイトは成功扱いにする。
@@ -477,19 +491,33 @@ const state = {
 
     // 取得したレスポンスをJSON/XML/HTMLとして解釈し、サイト設定に応じた抽出結果へ正規化する。
     function parseSiteResponse(html, site) {
+      // BOMを除去して先頭判定を安定させる。公開プロキシがXML宣言の前へBOMを付けてもRSSとして扱える。
+      const responseText = String(html || "").replace(/^\uFEFF/, "");
       // WordPress RESTやRacing TV APIなど、レスポンス全体がJSONの場合はここでオブジェクト化する。
       // JSONでない場合はnullのままにして、HTML/XMLとしてDOMParserへ渡す。
-      const json = safeJsonParse(html);
+      const json = safeJsonParse(responseText);
+      if (site.expectedResponseType === "json" && !json) {
+        // API URLがWAFやプロキシのHTMLエラーページを200で返した場合、汎用HTML抽出へ流さず次の経路へ進む。
+        throw new Error("APIレスポンスをJSONとして解析できませんでした");
+      }
       // RSS/AtomはHTMLパーサーで読むとitem/pubDate等の扱いが崩れるため、XMLとして読む。
-      const isXml = !json && /^\s*(<\?xml|<rss|<feed)/i.test(html);
+      const isXml = !json && /^\s*(<\?xml|<rss|<feed)/i.test(responseText);
+      if (site.expectedResponseType === "xml" && !isXml) {
+        // RSS URLからHTMLや空本文が返った場合も、記事候補の誤抽出を避けて別プロキシへフォールバックする。
+        throw new Error("RSSレスポンスをXMLとして解析できませんでした");
+      }
       // JSONサイトでも後段の関数シグネチャを揃えるため、空のHTML Documentを作って渡す。
       // これにより「docを使う抽出」と「dataを使う抽出」を同じparser配列で扱える。
       const doc = json
         ? new DOMParser().parseFromString("<!doctype html><html><body></body></html>", "text/html")
-        : new DOMParser().parseFromString(html, isXml ? "application/xml" : "text/html");
+        : new DOMParser().parseFromString(responseText, isXml ? "application/xml" : "text/html");
+      if (isXml && doc.querySelector("parsererror")) {
+        // 先頭がXMLでも本文が壊れているケースを明示的に失敗させ、空配列による原因不明表示を防ぐ。
+        throw new Error("RSSレスポンスをXMLとして解析できませんでした");
+      }
       const parser = PARSERS[site.parser] || PARSERS.generic;
       return dedupeByUrl(
-        parser(doc, site, html, json)
+        parser(doc, site, responseText, json)
           // 各抽出器が返すバラバラの形式を、sourceId/region/thumbnail付きの共通形式へ変換する。
           .map((item, index) => normalizeItem(item, site, index))
           // 日付がDateとして確定しない記事は、3日以内判定ができないためここで落とす。
@@ -608,7 +636,12 @@ const state = {
       if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
-      if (site.id === "thestraight") return extractTheStraightApiItems(data, site);
+      // TDN、ANZ Bloodstock、The Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
+      // TDNはRSSを予備経路として残しており、RSSレスポンス時はdataがnullになるため空配列を返す。
+      // その場合もPARSERS.generic側のextractFeedItemsが続けてRSSを抽出する。
+      if (["tdn_europe", "tdn_america", "anzbloodstock", "thestraight"].includes(site.id)) {
+        return extractWordPressApiItems(data, site);
+      }
       if (site.id === "bloodhorse") return extractBloodHorseItems(doc, site);
       if (site.id === "racing_com") return [...extractRacingComGraphqlItems(data, site), ...extractRacingComMarkdownItems(rawText, site)];
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
@@ -734,8 +767,8 @@ const state = {
       return "";
     }
 
-    // The StraightのWordPress REST APIから、埋め込みメディア付きの記事情報を抽出する。
-    function extractTheStraightApiItems(data, site) {
+    // WordPress REST APIから、埋め込みメディア付きの記事情報を媒体共通形式へ変換する。
+    function extractWordPressApiItems(data, site) {
       const posts = Array.isArray(data) ? data : [];
 
       return posts.map((post) => {
@@ -747,6 +780,7 @@ const state = {
           sizes["indiegraf-post-grid-medium"] && sizes["indiegraf-post-grid-medium"].source_url,
           sizes["post-thumbnail"] && sizes["post-thumbnail"].source_url,
           sizes.medium_large && sizes.medium_large.source_url,
+          sizes.medium && sizes.medium.source_url,
           media && media.source_url
         );
 
@@ -2313,13 +2347,11 @@ const state = {
 
     // HTMLエンティティをURLや見出しで使いやすい文字へ戻す。
     function decodeHtmlEntities(value) {
-      return String(value || "")
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, '"')
-        .replace(/&#039;/g, "'")
-        .replace(/&apos;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">");
+      // WordPressは右引用符などを&#8217;のような数値参照で返すため、固定置換ではなくブラウザ標準のHTMLデコードを使う。
+      // textarea.valueとして読むだけでDOMへ表示はしないので、見出しにHTMLタグが含まれても実行されない。
+      const textarea = document.createElement("textarea");
+      textarea.innerHTML = String(value || "");
+      return textarea.value;
     }
 
     // 現在の検索・地域・サイト条件に合わせて、タブ、件数、一覧、状態表示を再描画する。

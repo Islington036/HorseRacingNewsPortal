@@ -186,8 +186,12 @@ const state = {
     }
 
     async function fetchSite(site) {
-      const html = await fetchText(site.url);
-      const doc = new DOMParser().parseFromString(html, "text/html");
+      const html = await fetchText(site.url, site.accept);
+      // RSS/AtomはHTMLとして解釈するとlink要素の属性やXML名前空間を失うため、媒体設定の文書型で解析する。
+      const doc = new DOMParser().parseFromString(html, site.documentType || "text/html");
+      if (site.documentType && doc.querySelector("parsererror")) {
+        throw new Error("フィードをXMLとして解析できませんでした");
+      }
       const parser = PARSERS[site.parser] || PARSERS.generic;
       const items = parser(doc, site)
         .map((item) => normalizeItem(item, site))
@@ -203,7 +207,7 @@ const state = {
       return hydrateTruncatedTitles(dedupeByUrl(items), site);
     }
 
-    async function fetchText(url) {
+    async function fetchText(url, accept) {
       const proxyUrls = [
         CONFIG.CORS_PROXY(url),
         ...CONFIG.CORS_PROXY_FALLBACKS.map((buildUrl) => buildUrl(url))
@@ -212,7 +216,7 @@ const state = {
 
       for (const proxyUrl of proxyUrls) {
         try {
-          return await fetchProxyText(proxyUrl);
+          return await fetchProxyText(proxyUrl, CONFIG.REQUEST_TIMEOUT_MS, accept);
         } catch (error) {
           lastError = error;
         }
@@ -221,14 +225,14 @@ const state = {
       throw lastError || new Error(t("fetchFailed"));
     }
 
-    async function fetchProxyText(proxyUrl, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
+    async function fetchProxyText(proxyUrl, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS, accept) {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const response = await fetch(proxyUrl, {
           signal: controller.signal,
-          headers: { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
+          headers: { Accept: accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
         });
 
         if (!response.ok) {
@@ -268,6 +272,10 @@ const state = {
         ];
       },
 
+      atom(doc, site) {
+        return extractAtomItems(doc, site);
+      },
+
       sponichi(doc, site) {
         return [
           ...extractJsonLdItems(doc, site),
@@ -297,6 +305,38 @@ const state = {
         ];
       }
     };
+
+    // Atom entryから完全な見出し、記事URL、公開日時、enclosure画像だけを抽出する。
+    // 本文やsummaryはポータルに不要なため読み取らず、媒体の配信内容を必要最小限に留める。
+    function extractAtomItems(doc, site) {
+      return [...doc.getElementsByTagNameNS("*", "entry")].map((entry) => {
+        const links = [...entry.getElementsByTagNameNS("*", "link")];
+        const articleLink =
+          links.find((link) => (link.getAttribute("rel") || "alternate") === "alternate") ||
+          links.find((link) => link.getAttribute("href"));
+        const imageLink = links.find((link) => {
+          const rel = link.getAttribute("rel");
+          const type = link.getAttribute("type") || "";
+          return rel === "enclosure" && type.startsWith("image/");
+        });
+
+        return {
+          title: textByLocalName(entry, "title"),
+          url: articleLink && (articleLink.getAttribute("href") || articleLink.textContent),
+          publishedAt: parseDate(
+            textByLocalName(entry, "published") || textByLocalName(entry, "updated")
+          ),
+          thumbnail: imageLink && imageLink.getAttribute("href"),
+          source: site.name
+        };
+      });
+    }
+
+    // XMLのデフォルト名前空間に左右されず、指定localNameの最初の要素から文字列を取り出す。
+    function textByLocalName(root, localName) {
+      const element = root.getElementsByTagNameNS("*", localName)[0];
+      return element ? String(element.textContent || "").replace(/\s+/g, " ").trim() : "";
+    }
 
     function extractHochiItems(doc, site) {
       const items = [];
