@@ -14,8 +14,8 @@ export async function runSourceTest(source) {
     throw new Error("テスト媒体の設定が不完全です");
   }
 
-  const response = await fetchSourceText(source);
-  const parsedItems = await source.parse(response.text, source);
+  const response = await fetchAndParseSource(source);
+  const parsedItems = response.parsedItems;
   const items = parsedItems
     .map((item) => normalizeItem(item, source))
     .filter(Boolean)
@@ -59,8 +59,8 @@ export async function runSourceTest(source) {
   };
 }
 
-// CORS対応媒体は直接取得を先に試し、失敗時だけ本体と同じ公開プロキシへフォールバックする。
-async function fetchSourceText(source) {
+// CORS対応媒体は直接取得を先に試し、通信またはパース失敗時だけ本体と同じ公開プロキシへ進む。
+async function fetchAndParseSource(source) {
   const candidates = [];
   if (source.tryDirect) {
     candidates.push({ url: source.url, route: "direct" });
@@ -76,7 +76,10 @@ async function fetchSourceText(source) {
         timeoutMs: source.timeoutMs,
         headers: candidate.route === "direct" ? source.headers : undefined
       });
-      return { text, route: candidate.route };
+      // HTTP 200でもWAFやプロキシのHTML説明ページが返ることがある。
+      // 取得とパースを同じtry内に置き、JSON/XMLとして読めない場合は次の候補へフォールバックする。
+      const parsedItems = await source.parse(text, source);
+      return { parsedItems, route: candidate.route };
     } catch (error) {
       lastError = error;
     }

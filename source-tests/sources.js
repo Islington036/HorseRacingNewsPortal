@@ -54,7 +54,8 @@ export const SOURCES = [
     url: "https://www.thoroughbreddailynews.com/category/news-europe/feed/",
     baseUrl: "https://www.thoroughbreddailynews.com",
     parse: parseFeed,
-    // 本体ではRESTが全経路で失敗した場合だけ使うため、直接取得を試さず公開プロキシ経由を検証する。
+    // 本体と同じく直接取得を先に試し、RSSがCORSを許可しない場合は公開プロキシへ進む。
+    tryDirect: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
@@ -66,6 +67,7 @@ export const SOURCES = [
     baseUrl: "https://www.thoroughbreddailynews.com",
     parse: parseFeed,
     // Europe版と同じ条件でRSSの見出し・リンク・日時・画像が保たれているかを確認する。
+    tryDirect: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
@@ -89,6 +91,7 @@ export const SOURCES = [
     baseUrl: "https://www.anzbloodstocknews.com",
     parse: parseFeed,
     // RESTが直接取得・公開プロキシとも失敗した場合に備え、構造化されたRSSだけを予備経路にする。
+    tryDirect: true,
     requireDate: true,
     minimumItems: 1,
     // ANZのRSSは記事画像を配信しないため、画像URLがない全件を本体のダミー表示へ回せれば合格とする。
