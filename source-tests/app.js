@@ -60,7 +60,7 @@ async function runSelectedSource() {
     setStatus(
       result.passed ? "passed" : "failed",
       result.passed ? "合格" : "要確認",
-      `${result.sourceName}: ${result.itemCount}件、画像読込 ${result.loadedImages}件、経路 ${result.route}`
+      `${result.sourceName}: ${result.itemCount}件、画像読込 ${result.loadedImages}件、配信元画像なし ${result.missingThumbnails}件、経路 ${result.route}`
     );
   } catch (error) {
     setStatus("failed", "取得失敗", error && error.message ? error.message : String(error));
@@ -74,7 +74,9 @@ function renderMetrics(result) {
     ["記事", result.itemCount],
     ["見出し・リンク", result.validTitleLinks],
     ["日時", result.datedItems],
-    ["画像読込", result.loadedImages]
+    ["画像URLあり", result.thumbnailItems],
+    ["画像読込", result.loadedImages],
+    ["配信元画像なし", result.missingThumbnails]
   ];
 
   elements.metrics.replaceChildren(...metrics.map(([label, value]) => {
@@ -94,10 +96,18 @@ function renderItems(items) {
     const card = document.createElement("article");
     card.className = "result-card";
 
-    const image = document.createElement("img");
-    image.src = item.thumbnail;
-    image.alt = "";
-    image.referrerPolicy = "no-referrer";
+    // APIに画像URLがない記事は壊れたimgを作らず、本体でダミー表示になることを明示する。
+    const thumbnail = item.thumbnail
+      ? document.createElement("img")
+      : document.createElement("div");
+    if (item.thumbnail) {
+      thumbnail.src = item.thumbnail;
+      thumbnail.alt = "";
+      thumbnail.referrerPolicy = "no-referrer";
+    } else {
+      thumbnail.className = "result-placeholder";
+      thumbnail.textContent = "配信元画像なし";
+    }
 
     const body = document.createElement("div");
     body.className = "result-body";
@@ -107,9 +117,9 @@ function renderItems(items) {
     link.rel = "noopener noreferrer";
     link.textContent = item.title;
     const detail = document.createElement("p");
-    detail.textContent = `${formatDate(item.publishedAt)} / 画像 ${item.imageLoaded ? "OK" : "NG"}`;
+    detail.textContent = `${formatDate(item.publishedAt)} / ${item.thumbnail ? `画像 ${item.imageLoaded ? "OK" : "NG"}` : "本体ではダミー画像"}`;
     body.append(link, detail);
-    card.append(image, body);
+    card.append(thumbnail, body);
     return card;
   }));
 }

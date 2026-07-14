@@ -2315,13 +2315,11 @@ const state = {
 
     // HTMLエンティティをURLや見出しで使いやすい文字へ戻す。
     function decodeHtmlEntities(value) {
-      return String(value || "")
-        .replace(/&amp;/g, "&")
-        .replace(/&quot;/g, '"')
-        .replace(/&#039;/g, "'")
-        .replace(/&apos;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">");
+      // WordPressは右引用符などを&#8217;のような数値参照で返すため、固定置換ではなくブラウザ標準のHTMLデコードを使う。
+      // textarea.valueとして読むだけでDOMへ表示はしないので、見出しにHTMLタグが含まれても実行されない。
+      const textarea = document.createElement("textarea");
+      textarea.innerHTML = String(value || "");
+      return textarea.value;
     }
 
     // 現在の検索・地域・サイト条件に合わせて、タブ、件数、一覧、状態表示を再描画する。
