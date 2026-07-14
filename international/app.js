@@ -608,7 +608,8 @@ const state = {
       if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
-      if (site.id === "thestraight") return extractTheStraightApiItems(data, site);
+      // ANZ BloodstockとThe Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
+      if (site.id === "anzbloodstock" || site.id === "thestraight") return extractWordPressApiItems(data, site);
       if (site.id === "bloodhorse") return extractBloodHorseItems(doc, site);
       if (site.id === "racing_com") return [...extractRacingComGraphqlItems(data, site), ...extractRacingComMarkdownItems(rawText, site)];
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
@@ -734,8 +735,8 @@ const state = {
       return "";
     }
 
-    // The StraightのWordPress REST APIから、埋め込みメディア付きの記事情報を抽出する。
-    function extractTheStraightApiItems(data, site) {
+    // WordPress REST APIから、埋め込みメディア付きの記事情報を媒体共通形式へ変換する。
+    function extractWordPressApiItems(data, site) {
       const posts = Array.isArray(data) ? data : [];
 
       return posts.map((post) => {
@@ -747,6 +748,7 @@ const state = {
           sizes["indiegraf-post-grid-medium"] && sizes["indiegraf-post-grid-medium"].source_url,
           sizes["post-thumbnail"] && sizes["post-thumbnail"].source_url,
           sizes.medium_large && sizes.medium_large.source_url,
+          sizes.medium && sizes.medium.source_url,
           media && media.source_url
         );
 
