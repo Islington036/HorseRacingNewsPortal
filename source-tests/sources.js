@@ -66,5 +66,15 @@ export const SOURCES = [
     minimumItems: 1,
     // 現在の先頭記事にはfeatured_media未設定が含まれるため、存在する画像が全て読める50%を基準にする。
     minimumImageCoverage: 0.5
+  },
+  {
+    id: "scmp_racing_rss",
+    name: "SCMP Racing RSS",
+    url: "https://www.scmp.com/rss/39/feed/",
+    baseUrl: "https://www.scmp.com",
+    parse: parseFeed,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
   }
 ];
