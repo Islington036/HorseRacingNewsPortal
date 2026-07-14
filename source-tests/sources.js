@@ -1,8 +1,26 @@
-import { parseAtom, parseFeed, parseIrishFieldTopic, parseNewsSitemap, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseFeed, parseIrishFieldTopic, parseNewsSitemap, parseRacingComGraphql, parseWordPressPosts } from "./core.js";
+
+// Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
+const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
+  window.InternationalHorseRacingPortalDefinition.CONFIG;
+const racingComSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racing_com");
 
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  ...(racingComSite ? [{
+    id: "racing_com_graphql",
+    name: "Racing.com GraphQL",
+    url: racingComSite.apiUrl,
+    baseUrl: racingComSite.baseUrl,
+    headers: racingComSite.requestHeaders,
+    parse: parseRacingComGraphql,
+    tryDirect: true,
+    requiredRoute: "direct",
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  }] : []),
   {
     id: "irishfield_topic_api",
     name: "The Irish Field Topic API",
