@@ -82,7 +82,7 @@
         { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"] },
         { id: "thestraight", name: "The Straight", region: "australia", url: "https://thestraight.com.au/", apiUrl: "https://thestraight.com.au/wp-json/wp/v2/posts?per_page=20&_embed=1", feedUrl: "https://thestraight.com.au/feed/", baseUrl: "https://thestraight.com.au", parser: "generic", pathHints: ["/news/", "/racing/", "/bloodstock/"], includeAnySameHost: true },
         { id: "loveracing_nz", name: "LOVERACING.NZ", region: "new-zealand", url: "https://loveracing.nz/news/articles/racing", baseUrl: "https://loveracing.nz", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
-        { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", feedUrl: "https://www.scmp.com/rss/95/feed", baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true }
+        { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", feedUrl: "https://www.scmp.com/rss/39/feed/", baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true }
       ]
     };
 
