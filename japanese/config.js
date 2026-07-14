@@ -36,11 +36,11 @@
         {
           id: "nikkan",
           name: "日刊スポーツ",
-          url: "https://www.nikkansports.com/keiba/",
+          url: "https://www.nikkansports.com/keiba/atom.xml",
           baseUrl: "https://www.nikkansports.com",
-          parser: "nikkan",
-          hydrateTruncatedTitles: true,
-          titleHydrationLimit: 30
+          parser: "atom",
+          documentType: "application/xml",
+          accept: "application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8"
         },
         {
           id: "tospo",
