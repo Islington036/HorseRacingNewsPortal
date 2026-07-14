@@ -33,5 +33,15 @@ export const SOURCES = [
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
+  },
+  {
+    id: "tdn_america_rss",
+    name: "TDN America RSS",
+    url: "https://www.thoroughbreddailynews.com/category/news/feed/",
+    baseUrl: "https://www.thoroughbreddailynews.com",
+    parse: parseFeed,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
   }
 ];
