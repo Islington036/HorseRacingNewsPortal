@@ -39,6 +39,7 @@ export async function runSourceTest(source) {
   const minimumItems = source.minimumItems || 1;
   const minimumImageCoverage = source.minimumImageCoverage ?? 0.75;
   const imageCoverage = itemCount ? loadedImages / itemCount : 0;
+  const routeMatched = !source.requiredRoute || response.route === source.requiredRoute;
 
   return {
     sourceId: source.id,
@@ -55,6 +56,7 @@ export async function runSourceTest(source) {
       itemCount >= minimumItems &&
       validTitleLinks === itemCount &&
       (!source.requireDate || datedItems === itemCount) &&
+      routeMatched &&
       imageCoverage >= minimumImageCoverage &&
       // URLが配信された画像は全件読めることを要求し、画像URL自体がない記事とは別に判定する。
       loadedImages === thumbnailItems,
@@ -336,6 +338,28 @@ export function parseIrishFieldTopic(text) {
     url: firstValue(article.hspermlink, article.permalink, article.url),
     publishedAt: firstValue(article.releasedate, article.modified, article.date),
     thumbnail: buildIrishFieldImageUrl(article)
+  }));
+}
+
+// Racing.com公式フロントエンドが利用するGraphQL応答を、カード用の共通形式へ変換する。
+export function parseRacingComGraphql(text) {
+  const data = parseJsonPayload(text);
+  const articles = data && data.data && Array.isArray(data.data.getNewsList)
+    ? data.data.getNewsList
+    : data && Array.isArray(data.getNewsList)
+      ? data.getNewsList
+      : [];
+
+  return articles.map((article) => ({
+    title: firstValue(article.short_title, article.name, article.title),
+    url: firstValue(article.page_url, article.url),
+    publishedAt: firstValue(article.article_date, article.published, article.modified),
+    thumbnail: firstValue(
+      article.image_url,
+      article.thumbnail,
+      article.image_object && firstValue(article.image_object.src, article.image_object.thumbnail_src),
+      article.thumbnail_object && firstValue(article.thumbnail_object.src, article.thumbnail_object.thumbnail_src)
+    )
   }));
 }
 
