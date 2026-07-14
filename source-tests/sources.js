@@ -12,5 +12,16 @@ export const SOURCES = [
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
+  },
+  {
+    id: "dailymail_rss",
+    name: "Daily Mail Racing RSS",
+    url: "https://www.dailymail.com/sport/racing/index.rss",
+    baseUrl: "https://www.dailymail.com",
+    parse: parseFeed,
+    tryDirect: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
   }
 ];
