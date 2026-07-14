@@ -7,6 +7,7 @@ const PROXY_BUILDERS = [
   (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
   (url) => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(url)
 ];
+const TEXT_PROXY = (url) => "https://r.jina.ai/" + url;
 
 // 指定された媒体1件を取得し、記事データと画像の実読込結果をまとめて返す。
 export async function runSourceTest(source) {
@@ -15,7 +16,9 @@ export async function runSourceTest(source) {
   }
 
   const response = await fetchAndParseSource(source);
-  const parsedItems = response.parsedItems;
+  const parsedItems = source.hydrateFromReader
+    ? await hydrateItemsFromReader(response.parsedItems, source)
+    : response.parsedItems;
   const items = parsedItems
     .map((item) => normalizeItem(item, source))
     .filter(Boolean)
@@ -65,9 +68,17 @@ async function fetchAndParseSource(source) {
   if (source.tryDirect) {
     candidates.push({ url: source.url, route: "direct" });
   }
+  if (source.allowTextProxy && source.preferTextProxy) {
+    candidates.push({ url: TEXT_PROXY(source.url), route: "text-proxy" });
+  }
   PROXY_BUILDERS.forEach((buildUrl, index) => {
     candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
   });
+  if (source.allowTextProxy && !source.preferTextProxy) {
+    // Sitemapの生XMLを公開CORSプロキシで取得できない場合だけ、ReaderからURL候補を得る。
+    // ReaderではXMLのタイトル・日時・画像が失われるため、後段のhydrateItemsFromReaderで記事詳細を補う。
+    candidates.push({ url: TEXT_PROXY(source.url), route: "text-proxy" });
+  }
 
   let lastError = null;
   for (const candidate of candidates) {
@@ -147,6 +158,114 @@ export function parseFeed(text, source) {
       thumbnail
     };
   });
+}
+
+// Google News Sitemapから見出し・記事URL・公開日時・画像を抽出する。
+// XML名前空間の接頭辞は配信元によって変わり得るため、querySelectorの文字列ではなくlocalNameで読む。
+// 同じサイトマップに複数カテゴリが混在する場合は、媒体設定のpathHintsで記事URLを絞り込む。
+export function parseNewsSitemap(text, source) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.querySelector("parsererror")) {
+    if (!source.allowTextProxy) {
+      throw new Error("ニュースサイトマップをXMLとして解析できませんでした");
+    }
+
+    // Jina ReaderがSitemapをMarkdown化した場合は記事URLだけが残る。
+    // URL以外は推測せず空欄にし、記事詳細Readerで公式メタデータを補完する。
+    return [...String(text || "").matchAll(/\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)]
+      .map((match) => match[1])
+      .filter((url, index, urls) => urls.indexOf(url) === index && matchesSourcePath(url, source))
+      .map((url) => ({ title: "", url, publishedAt: "", thumbnail: "" }));
+  }
+
+  return [...doc.getElementsByTagNameNS("*", "url")]
+    .map((entry) => {
+      const url = textByLocalName(entry, "loc");
+      if (!matchesSourcePath(url, source)) return null;
+
+      const newsNode = entry.getElementsByTagNameNS("*", "news")[0];
+      const imageNode = entry.getElementsByTagNameNS("*", "image")[0];
+
+      return {
+        title: newsNode ? textByLocalName(newsNode, "title") : "",
+        url,
+        publishedAt: newsNode ? textByLocalName(newsNode, "publication_date") : "",
+        thumbnail: imageNode ? textByLocalName(imageNode, "loc") : ""
+      };
+    })
+    .filter(Boolean);
+}
+
+// SitemapのReader予備経路でURLしか得られなかった記事を、記事ページのReaderメタデータで補完する。
+// すでにXMLから4項目が揃っている記事には追加アクセスせず、欠損候補だけを上限付きで処理する。
+async function hydrateItemsFromReader(items, source) {
+  const limit = Math.max(1, Number(source.hydrationLimit) || DEFAULT_MAX_ITEMS);
+  const candidates = items.slice(0, limit);
+
+  return mapWithConcurrency(candidates, source.hydrationConcurrency || 2, async (item) => {
+    if (item.title && item.publishedAt && item.thumbnail) return item;
+
+    try {
+      const text = await fetchText(TEXT_PROXY(item.url), { timeoutMs: source.hydrationTimeoutMs });
+      const detail = parseReaderArticle(text);
+      return {
+        ...item,
+        title: detail.title || item.title,
+        publishedAt: detail.publishedAt || item.publishedAt,
+        thumbnail: detail.thumbnail || item.thumbnail
+      };
+    } catch (_error) {
+      return null;
+    }
+  }).then((results) => results.filter(Boolean));
+}
+
+// Jina Readerの記事出力から、ページタイトル・公開日時・最初の実写真を抽出する。
+function parseReaderArticle(text) {
+  const raw = String(text || "");
+  const images = [...raw.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)]
+    .map((match) => unwrapImageProxyUrl(match[1]))
+    .filter(isUsableArticleImage);
+
+  return {
+    title: cleanText((raw.match(/^Title:\s*(.+)$/im) || [])[1]),
+    publishedAt: cleanText((raw.match(/^Published Time:\s*(.+)$/im) || [])[1]),
+    thumbnail: images[0] || ""
+  };
+}
+
+// Next.js画像変換URLのurlクエリに実画像がある場合は、元画像へ戻してホットリンク判定を安定させる。
+function unwrapImageProxyUrl(value) {
+  try {
+    const parsed = new URL(value);
+    const nested = parsed.searchParams.get("url");
+    return nested ? decodeURIComponent(nested) : parsed.href;
+  } catch (_error) {
+    return value || "";
+  }
+}
+
+// ロゴ・SVG・追跡画像を除き、記事カードに使えるHTTP画像だけを残す。
+function isUsableArticleImage(value) {
+  return isHttpUrl(value) && !/\.svg(?:[?#]|$)|logo|icon|avatar|author|google|facebook|twitter|placeholder|no[-_]?image|transparent|pixel|bookmakers?|\/janus\/|trustarc|consent\.|powered-by|advert|sponsor/i.test(value);
+}
+
+// 外部記事の詳細取得を少数並列に抑え、1媒体のテストが配信元へ一斉接続しないようにする。
+async function mapWithConcurrency(items, concurrency, iteratee) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await iteratee(items[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, runWorker));
+  return results;
 }
 
 // 日本版本体と同じlocalName基準でAtom entryを読み、alternateリンクと画像enclosureを分離する。
@@ -276,6 +395,33 @@ function absoluteUrl(value, baseUrl) {
   } catch (_error) {
     return "";
   }
+}
+
+// サイトマップ共有時に、設定されたURL断片へ一致する記事だけをテスト対象にする。
+function matchesSourcePath(value, source) {
+  if (!value) return false;
+
+  let parsed;
+  try {
+    parsed = new URL(value, source.baseUrl || source.url);
+  } catch (_error) {
+    return false;
+  }
+
+  const path = parsed.pathname.toLowerCase();
+  const prefixes = Array.isArray(source.pathPrefixes) ? source.pathPrefixes : [];
+  const includes = Array.isArray(source.pathHints) ? source.pathHints : [];
+  const excludes = Array.isArray(source.excludePathHints) ? source.excludePathHints : [];
+
+  if (prefixes.length && !prefixes.some((prefix) => path.startsWith(String(prefix).toLowerCase()))) {
+    return false;
+  }
+
+  if (includes.length && !includes.some((hint) => path.includes(String(hint).toLowerCase()))) {
+    return false;
+  }
+
+  return !excludes.some((hint) => path.includes(String(hint).toLowerCase()));
 }
 
 function isHttpUrl(value) {

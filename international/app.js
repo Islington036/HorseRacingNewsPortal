@@ -266,12 +266,13 @@ const state = {
 
     // 1サイト分のAPI/RSS/HTML候補を順番に試し、最初に抽出できた記事一覧を返す。
     async function fetchSite(site) {
-      // apiUrl/feedUrl/urlの順で試す。APIやRSSがあるサイトはHTMLより構造が安定しやすいため優先する。
+      // sitemapUrl/apiUrl/feedUrl/urlの順で試す。構造化経路があるサイトはHTMLより安定しやすいため優先する。
       // Setで包んでいるのは、設定ミスで同じURLが複数入った場合に無駄な外部アクセスを避けるため。
       // structuredSourcesOnlyの媒体は、API/RSS障害時に一覧HTMLへ落とさない。
       // 一覧HTMLの広告日付やイベント日付を記事日時と誤認して「期間内記事なし」にするより、
       // 取得失敗として前回キャッシュを維持する方が、ユーザーへ正しい状態を伝えられるためである。
       const sourceUrls = [...new Set([
+        site.sitemapUrl,
         site.apiUrl,
         site.feedUrl,
         site.structuredSourcesOnly ? null : site.url
@@ -283,16 +284,25 @@ const state = {
         // API/RSSまでMarkdown化するとJSON/XMLとして扱えなくなるため、site.urlのときだけ元設定を使う。
         const requestSite = {
           ...site,
-          // RSS/APIをJina Readerへ渡すとXML/JSON構造がMarkdown化され、空リンク見出しなどのノイズが混ざる。
+          // Sitemap/RSS/APIをJina Readerへ渡すとXML/JSON構造がMarkdown化され、空リンク見出しなどのノイズが混ざる。
           // Jinaは公式ページHTMLを読む最後の手段としてだけ使う。
-          allowTextProxy: sourceUrl === site.url,
-          preferTextProxy: sourceUrl === site.url ? site.preferTextProxy : false,
+          allowTextProxy:
+            sourceUrl === site.url ||
+            (sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy),
+          preferTextProxy:
+            sourceUrl === site.url
+              ? site.preferTextProxy
+              : sourceUrl === site.sitemapUrl
+                ? site.preferSitemapTextProxy
+                : false,
           // HTTP 200のエラーページをJSON/RSSとして誤って成功扱いしないよう、候補URLごとの形式を記録する。
           expectedResponseType:
             sourceUrl === site.apiUrl
               ? "json"
-              : sourceUrl === site.feedUrl
-                ? "xml"
+              : sourceUrl === site.feedUrl || sourceUrl === site.sitemapUrl
+                ? sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy
+                  ? "xml-or-reader"
+                  : "xml"
                 : "html"
         };
 
@@ -305,7 +315,7 @@ const state = {
             const items = site.id === "paulickreport"
               // Paulick Reportの一覧ページには日付が出ないため、記事詳細ページのメタ情報で公開日時を補完する。
               ? await parsePaulickReportResponse(html, site)
-              : parseSiteResponse(html, requestSite);
+              : await parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
               // 1つの取得経路で記事が取れたら、そのサイトは成功扱いにする。
@@ -490,7 +500,7 @@ const state = {
     }
 
     // 取得したレスポンスをJSON/XML/HTMLとして解釈し、サイト設定に応じた抽出結果へ正規化する。
-    function parseSiteResponse(html, site) {
+    async function parseSiteResponse(html, site) {
       // BOMを除去して先頭判定を安定させる。公開プロキシがXML宣言の前へBOMを付けてもRSSとして扱える。
       const responseText = String(html || "").replace(/^\uFEFF/, "");
       // WordPress RESTやRacing TV APIなど、レスポンス全体がJSONの場合はここでオブジェクト化する。
@@ -516,8 +526,12 @@ const state = {
         throw new Error("RSSレスポンスをXMLとして解析できませんでした");
       }
       const parser = PARSERS[site.parser] || PARSERS.generic;
+      let rawItems = parser(doc, site, responseText, json);
+      if (site.readerDetailHydration) {
+        rawItems = await hydrateReaderDetailItems(rawItems, site);
+      }
       return dedupeByUrl(
-        parser(doc, site, responseText, json)
+        rawItems
           // 各抽出器が返すバラバラの形式を、sourceId/region/thumbnail付きの共通形式へ変換する。
           .map((item, index) => normalizeItem(item, site, index))
           // 日付がDateとして確定しない記事は、3日以内判定ができないためここで落とす。
@@ -610,6 +624,7 @@ const state = {
         return dedupeRawItems([
           ...extractSiteSpecificItems(doc, site, rawText, data),
           ...extractStructuredJsonItems(data, site),
+          ...extractNewsSitemapItems(doc, site, rawText),
           ...extractFeedItems(doc, site),
           ...extractMarkdownItems(rawText, site),
           ...extractJsonLdItems(doc, site),
@@ -619,6 +634,101 @@ const state = {
         ]);
       }
     };
+
+    // Google News Sitemapを共通形式へ変換する。
+    // 接頭辞（news/image）は配信側の都合で変わり得るため、名前空間に依存しないlocalName検索を使う。
+    // URLのカテゴリ判定はnormalizeItem内のisCandidateArticleUrlでも再確認し、共有Sitemapの他競技を除外する。
+    function extractNewsSitemapItems(doc, site, rawText) {
+      const xmlItems = [...doc.getElementsByTagNameNS("*", "url")].map((entry) => {
+        const url = textByLocalName(entry, "loc");
+        const newsNode = entry.getElementsByTagNameNS("*", "news")[0];
+        if (!url || !newsNode || !isCandidateArticleUrl(url, site)) return null;
+
+        const imageNode = entry.getElementsByTagNameNS("*", "image")[0];
+        return {
+          title: textByLocalName(newsNode, "title"),
+          url,
+          publishedAt: parseDate(textByLocalName(newsNode, "publication_date")),
+          thumbnail: imageNode ? textByLocalName(imageNode, "loc") : "",
+          source: site.name
+        };
+      }).filter(Boolean);
+
+      if (xmlItems.length || !site.allowSitemapTextProxy) return xmlItems;
+
+      // ReaderはSitemapのタイトル・日時・画像を落とすため、ここではURL候補だけを作る。
+      // 欠損項目はhydrateReaderDetailItemsが記事ページの公式メタデータから補完する。
+      return [...String(rawText || "").matchAll(/\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)]
+        .map((match) => match[1])
+        .filter((url, index, urls) => urls.indexOf(url) === index && isCandidateArticleUrl(url, site))
+        .map((url) => ({ title: "", url, publishedAt: null, thumbnail: "", source: site.name }));
+    }
+
+    // XML名前空間の接頭辞に左右されず、指定localNameの先頭要素から文字列を取り出す。
+    function textByLocalName(root, localName) {
+      const element = root && root.getElementsByTagNameNS("*", localName)[0];
+      return element ? cleanWhitespace(element.textContent) : "";
+    }
+
+    // Reader経由のSitemapでURLしか残らなかった候補を、記事ページのメタデータで上限付き補完する。
+    async function hydrateReaderDetailItems(items, site) {
+      const limit = site.detailHydrationLimit || site.maxItems || CONFIG.MAX_ITEMS_PER_SITE;
+      const candidates = items.slice(0, limit);
+
+      const hydrated = await mapWithConcurrency(
+        candidates,
+        site.detailHydrationConcurrency || 2,
+        async (item) => {
+          if (item.title && item.publishedAt && item.thumbnail) return item;
+
+          try {
+            const detailText = await fetchText(item.url, {
+              ...site,
+              allowTextProxy: true,
+              preferTextProxy: true,
+              textProxyOnly: true,
+              requestTimeoutMs: site.detailRequestTimeoutMs || CONFIG.REQUEST_TIMEOUT_MS
+            });
+            const detail = extractReaderArticleMetadata(detailText);
+            return {
+              ...item,
+              title: detail.title || item.title,
+              publishedAt: detail.publishedAt || item.publishedAt,
+              thumbnail: detail.thumbnail || item.thumbnail
+            };
+          } catch (_error) {
+            return null;
+          }
+        }
+      );
+
+      return hydrated.filter(Boolean);
+    }
+
+    // Jina Readerの記事出力からTitle、Published Time、最初の実写真を取り出す。
+    function extractReaderArticleMetadata(text) {
+      const raw = String(text || "");
+      const images = [...raw.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)]
+        .map((match) => unwrapImageProxyUrl(match[1]))
+        .filter(isUsableImageValue);
+
+      return {
+        title: cleanTitle((raw.match(/^Title:\s*(.+)$/im) || [])[1]),
+        publishedAt: parseDate((raw.match(/^Published Time:\s*(.+)$/im) || [])[1]),
+        thumbnail: images[0] || ""
+      };
+    }
+
+    // Next.jsの画像変換URLに元画像URLが埋め込まれている場合は、配信元画像へ戻す。
+    function unwrapImageProxyUrl(value) {
+      try {
+        const parsed = new URL(value);
+        const nested = parsed.searchParams.get("url");
+        return nested ? decodeURIComponent(nested) : parsed.href;
+      } catch (_error) {
+        return value || "";
+      }
+    }
 
     // 汎用抽出だけでは拾いにくいサイトを、サイトIDごとの専用ロジックへ振り分ける。
     function extractSiteSpecificItems(doc, site, rawText, data) {
@@ -1951,7 +2061,7 @@ const state = {
       // JinaやNext.jsの変換URLでは、実画像URLがクエリ内にエンコードされることがある。
       // 元文字列とデコード後の両方を調べ、サイト装飾SVG・ロゴ・アイコンをニュース写真として使わない。
       const target = `${url} ${decodedUrl}`;
-      return !/blank\.gif|spacer\.gif|transparent|no[-_]?image|dummy|placeholder|default[-_]?image|avatar|author|\/icons?\/|\/svgs?\/|\.svg(?:[?#&\s]|$)|brand[-_]?icon|racing-brand-icon|logo|favicon|sprite|pixel|tracking|padlock|lock_|chevron|time_solid|search[-_]?icon|menu[-_]?icon|profile[-_]?icon|star[-_]?icon|open_in_new_window|bookmakers?\/circle|\/janus\/bookmakers\/|initials?|monogram|letter[-_]?avatar|data:image\/gif/i.test(target);
+      return !/blank\.gif|spacer\.gif|transparent|no[-_]?image|dummy|placeholder|default[-_]?image|avatar|author|\/icons?\/|\/svgs?\/|\.svg(?:[?#&\s]|$)|brand[-_]?icon|racing-brand-icon|logo|favicon|sprite|pixel|tracking|padlock|lock_|chevron|time_solid|search[-_]?icon|menu[-_]?icon|profile[-_]?icon|star[-_]?icon|open_in_new_window|bookmakers?|\/janus\/|trustarc|consent\.|powered-by|advert|sponsor|initials?|monogram|letter[-_]?avatar|data:image\/gif/i.test(target);
     }
 
     // URLが対象サイトの記事ページらしいか、ホスト・パス・除外語で判定する。
@@ -1987,6 +2097,11 @@ const state = {
         // Racing Postのカテゴリ導線も/news/配下に大量にあるため、記事ID付きURLだけを記事として扱う。
         return false;
       }
+
+      const prefixes = site.pathPrefixes || [];
+      if (prefixes.length > 0 && !prefixes.some((prefix) => lowerPath.startsWith(String(prefix).toLowerCase()))) return false;
+      const excludedHints = site.excludePathHints || [];
+      if (excludedHints.some((hint) => lowerPath.includes(String(hint).toLowerCase()))) return false;
 
       const hints = site.pathHints || [];
       if (hints.length > 0 && hints.some((hint) => lowerHref.includes(String(hint).toLowerCase()) || lowerPath.includes(String(hint).toLowerCase()))) return true;
