@@ -1,4 +1,4 @@
-import { parseFeed, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseFeed, parseWordPressPosts } from "./core.js";
 
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
@@ -8,7 +8,7 @@ export const SOURCES = [
     name: "日刊スポーツ Atom",
     url: "https://www.nikkansports.com/keiba/atom.xml",
     baseUrl: "https://www.nikkansports.com",
-    parse: parseFeed,
+    parse: parseAtom,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
@@ -50,7 +50,6 @@ export const SOURCES = [
     url: "https://www.anzbloodstocknews.com/wp-json/wp/v2/posts?categories=67&per_page=20&_embed=1",
     baseUrl: "https://www.anzbloodstocknews.com",
     parse: parseWordPressPosts,
-    tryDirect: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
