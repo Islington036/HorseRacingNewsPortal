@@ -1,8 +1,43 @@
-import { parseAtom, parseFeed, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseFeed, parseNewsSitemap, parseWordPressPosts } from "./core.js";
 
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "racingpost_news_sitemap",
+    name: "Racing Post News Sitemap",
+    url: "https://www.racingpost.com/sitemaps/news-sitemap.xml",
+    baseUrl: "https://www.racingpost.com",
+    pathPrefixes: ["/news/"],
+    excludePathHints: ["/news/betting-offers/"],
+    parse: parseNewsSitemap,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    hydrateFromReader: true,
+    hydrationLimit: 8,
+    hydrationConcurrency: 2,
+    hydrationTimeoutMs: 20000,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
+  },
+  {
+    id: "racingpost_bloodstock_sitemap",
+    name: "Racing Post Bloodstock Sitemap",
+    url: "https://www.racingpost.com/sitemaps/news-sitemap.xml",
+    baseUrl: "https://www.racingpost.com",
+    pathPrefixes: ["/bloodstock/"],
+    parse: parseNewsSitemap,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    hydrateFromReader: true,
+    hydrationLimit: 8,
+    hydrationConcurrency: 2,
+    hydrationTimeoutMs: 20000,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
+  },
   {
     id: "nikkan_atom",
     name: "日刊スポーツ Atom",
