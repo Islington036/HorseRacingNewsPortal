@@ -23,6 +23,12 @@
       animationClearTimer: null
     };
 
+    // 全媒体が共有するReader要求の開始時刻を直列管理する。
+    // Promiseチェーンは「前の通信完了」ではなく「次の開始枠確保」までを待つため、通信自体は必要に応じて並行できる。
+    let textProxySchedule = Promise.resolve();
+    let textProxyNextAllowedAt = 0;
+    let textProxyBlockedUntil = 0;
+
     const elements = {
       pageTitle: document.querySelector("#pageTitle"),
       subtitle: document.querySelector("#subtitle"),
@@ -600,38 +606,107 @@
     }
 
     // 1つのプロキシURLから本文を取得し、HTTPエラーやタイムアウトを例外化する。
+    // Readerだけは共通スケジューラで開始間隔を空け、429時にRetry-Afterを尊重して一度だけ再試行する。
     async function fetchProxyText(proxyUrl, requestHeaders = {}, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
-      const controller = new AbortController();
-      // サイト別に待機時間を上書きできるようにする。通常は全体設定を使い、
-      // Racing TVのようにReader経由の初回応答が遅いサイトだけ個別に延長する。
-      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      const usesTextProxy = isTextProxyRequest(proxyUrl);
+      const retryLimit = usesTextProxy ? CONFIG.TEXT_PROXY_RETRY_LIMIT : 0;
+      let lastError = null;
 
+      for (let attempt = 0; attempt <= retryLimit; attempt += 1) {
+        // レート制御の待機後にAbortControllerを作り、待機時間を通信タイムアウトへ含めない。
+        if (usesTextProxy) await reserveTextProxyRequestSlot();
+
+        const controller = new AbortController();
+        // サイト別に待機時間を上書きできるようにする。通常は全体設定を使い、
+        // Racing TVのようにReader経由の初回応答が遅いサイトだけ個別に延長する。
+        const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+          // サイト側APIに追加ヘッダーが必要な場合は、既定Acceptよりサイト設定を優先する。
+          const headers = {
+            Accept: "application/json,text/html,application/xhtml+xml,text/markdown,text/plain,application/xml;q=0.9,*/*;q=0.8",
+            ...requestHeaders
+          };
+
+          const response = await fetch(proxyUrl, {
+            credentials: "omit",
+            signal: controller.signal,
+            headers
+          });
+
+          if (!response.ok) {
+            lastError = new Error(`HTTP ${response.status}`);
+            if (usesTextProxy && response.status === 429 && attempt < retryLimit) {
+              // 他の待機中Reader要求も同じ解除時刻を見るため、個別sleepではなく共有ブロック時刻を更新する。
+              blockTextProxyRequests(parseRetryAfterMs(response.headers.get("Retry-After")));
+              continue;
+            }
+            throw lastError;
+          }
+
+          return await response.text();
+        } catch (error) {
+          if (error.name === "AbortError") {
+            throw new Error(t("timeout"));
+          }
+          throw error;
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      }
+
+      throw lastError || new Error(t("fetchFailed"));
+    }
+
+    // CONFIG.TEXT_PROXYが生成するURLかを判定し、通常APIやCORSプロキシへ不要な待機を入れない。
+    function isTextProxyRequest(value) {
       try {
-        // サイト側APIに追加ヘッダーが必要な場合は、既定Acceptよりサイト設定を優先する。
-        const headers = {
-          Accept: "application/json,text/html,application/xhtml+xml,text/markdown,text/plain,application/xml;q=0.9,*/*;q=0.8",
-          ...requestHeaders
-        };
+        return new URL(String(value || "")).hostname === "r.jina.ai";
+      } catch (_error) {
+        return false;
+      }
+    }
 
-        const response = await fetch(proxyUrl, {
-          credentials: "omit",
-          signal: controller.signal,
-          headers
+    // Reader要求の開始枠を予約する。キュー内の各タスクは実行時点の429ブロック時刻も再評価する。
+    function reserveTextProxyRequestSlot() {
+      const reservation = textProxySchedule
+        .catch(() => {})
+        .then(async () => {
+          // 待機中に別要求が429を受けると共有ブロック時刻が延長されるため、
+          // 一度の判定だけで開始せず、実際に開始可能になるまで最新時刻を読み直す。
+          while (true) {
+            const now = Date.now();
+            const waitUntil = Math.max(textProxyNextAllowedAt, textProxyBlockedUntil);
+            if (waitUntil <= now) break;
+            await waitForMilliseconds(waitUntil - now);
+          }
+          textProxyNextAllowedAt = Date.now() + CONFIG.TEXT_PROXY_MIN_INTERVAL_MS;
         });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
+      // 予約失敗で後続要求まで永久停止しないよう、共有チェーン側では例外を吸収する。
+      textProxySchedule = reservation.catch(() => {});
+      return reservation;
+    }
 
-        return await response.text();
-      } catch (error) {
-        if (error.name === "AbortError") {
-          throw new Error(t("timeout"));
-        }
-        throw error;
-      } finally {
-        window.clearTimeout(timeoutId);
-      }
+    // 429を受けた時点からReader全体を停止し、すでに待機中の要求にも解除時刻を共有する。
+    function blockTextProxyRequests(delayMs) {
+      textProxyBlockedUntil = Math.max(textProxyBlockedUntil, Date.now() + delayMs);
+    }
+
+    // Retry-Afterの秒数・HTTP日付をミリ秒へ変換し、不正値なら設定済みの既定待機時間へ戻す。
+    function parseRetryAfterMs(value) {
+      const raw = String(value || "").trim();
+      const seconds = Number(raw);
+      if (raw && Number.isFinite(seconds) && seconds >= 0) return Math.max(1000, seconds * 1000);
+
+      const retryAt = Date.parse(raw);
+      if (raw && !Number.isNaN(retryAt)) return Math.max(1000, retryAt - Date.now());
+      return CONFIG.TEXT_PROXY_DEFAULT_RETRY_AFTER_MS;
+    }
+
+    // UIスレッドを塞がず、Readerの次回開始時刻まで非同期で待機する。
+    function waitForMilliseconds(delayMs) {
+      return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, delayMs)));
     }
 
     const PARSERS = {
