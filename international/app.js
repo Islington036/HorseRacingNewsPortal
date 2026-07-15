@@ -1463,12 +1463,13 @@ const state = {
       editionNodes.forEach((edition) => {
         const editionSlug = edition.slug || edition.date || "";
         const editionDate =
-          parseDate(edition.date) ||
           parseDate(edition.publishedAt) ||
+          parseDate(edition.date) ||
           parseDateFromUrl(`/edition/${editionSlug}/`);
 
         edition.pages.forEach((page) => {
           if (!page || !page.headline || !page.slug || skipTypes.has(page.articleType)) return;
+          if (isTtrAusNzFixedPage(page.slug)) return;
           const pageEditionSlug = page.editionSlug || editionSlug;
           if (!pageEditionSlug) return;
 
@@ -1482,7 +1483,16 @@ const state = {
         });
       });
 
-      return items;
+      // JSON深度走査の順序はNext.js内部構造で変わるため、返却前に公開時刻の降順を明示する。
+      return items.sort((left, right) => right.publishedAt - left.publishedAt);
+    }
+
+    // エディション内へ毎日挿入される案内・索引ページを、記事種別に依存せずslugで除外する。
+    // normal型には実ニュースも存在し得るため、normal全体を落とさず既知の固定ページだけを限定除外する。
+    function isTtrAusNzFixedPage(slug) {
+      const value = String(slug || "");
+      return /^(?:job-board|wednesday-trivia|2026-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(value) ||
+        /^looking-ahead(?:-|$)/i.test(value);
     }
 
     // RacenetをJina Readerで読んだMarkdownから、画像付きカードを記事化する。
