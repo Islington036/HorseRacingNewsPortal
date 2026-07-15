@@ -103,7 +103,9 @@
         { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathHints: ["/edition/", "/news/", "/articles/"], includeAnySameHost: true, preferTextProxy: true, allowTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000 },
         { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"] },
         { id: "thestraight", name: "The Straight", region: "australia", url: "https://thestraight.com.au/", apiUrl: "https://thestraight.com.au/wp-json/wp/v2/posts?per_page=20&_embed=1", feedUrl: "https://thestraight.com.au/feed/", baseUrl: "https://thestraight.com.au", parser: "generic", pathHints: ["/news/", "/racing/", "/bloodstock/"], includeAnySameHost: true, tryDirect: true },
-        { id: "loveracing_nz", name: "LOVERACING.NZ", region: "new-zealand", url: "https://loveracing.nz/news/articles/racing", baseUrl: "https://loveracing.nz", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
+        // Readerは画像・完全見出し・日時を安定して返す一方、後続の公開CORSプロキシは長時間失敗する。
+        // textProxyOnlyで既知の失敗経路を除き、更新全体がタイムアウト待ちになることを防ぐ。
+        { id: "loveracing_nz", name: "LOVERACING.NZ", region: "new-zealand", url: "https://loveracing.nz/news/articles/racing", baseUrl: "https://loveracing.nz", parser: "generic", pathHints: ["/news/"], preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000 },
         { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", feedUrl: "https://www.scmp.com/rss/39/feed/", baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true }
       ]
     };

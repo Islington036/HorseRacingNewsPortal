@@ -1,4 +1,4 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -10,6 +10,23 @@ const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url="
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "loveracing_reader",
+    name: "LOVERACING.NZ Reader Listing",
+    url: "https://loveracing.nz/news/articles/racing",
+    baseUrl: "https://loveracing.nz",
+    parse: parseLoveracingReader,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    textProxyOnly: true,
+    requiredRoute: "text-proxy",
+    timeoutMs: 20000,
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1,
+    forbiddenUrlPatterns: [/\/News\/Articles\//i, /\/RaceInfo\//i]
+  },
   {
     id: "paulickreport_bing_rss",
     name: "Paulick Report / Bing News RSS Index",
