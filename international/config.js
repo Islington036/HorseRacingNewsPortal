@@ -102,10 +102,10 @@
         { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", apiUrl: PAULICK_REPORT_BING_RSS_API, baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true },
         { id: "racing_com", name: "Racing.com", region: "australia", url: "https://www.racing.com/news/latest-news", apiUrl: "https://graphql.api.racing.com?query=" + encodeURIComponent(RACING_COM_NEWS_QUERY), baseUrl: "https://www.racing.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: false, tryDirect: true, requestHeaders: { "x-api-key": RACING_COM_PUBLIC_API_KEY, "content-type": "application/json;charset=UTF-8" } },
         { id: "racenet", name: "Racenet", region: "australia", url: "https://www.racenet.com.au/news", baseUrl: "https://www.racenet.com.au", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
-        { id: "anzbloodstock", name: "ANZ Bloodstock News", region: "australia", url: "https://www.anzbloodstocknews.com/category/latest-news/", apiUrl: "https://www.anzbloodstocknews.com/wp-json/wp/v2/posts?categories=67&per_page=20&_embed=1", feedUrl: "https://www.anzbloodstocknews.com/category/latest-news/feed/", baseUrl: "https://www.anzbloodstocknews.com", parser: "generic", pathHints: ["/category/latest-news/"], includeAnySameHost: true, preferTextProxy: false, allowTextProxy: false, tryDirect: true, structuredSourcesOnly: true },
+        { id: "anzbloodstock", name: "ANZ Bloodstock News", region: "australia", url: "https://www.anzbloodstocknews.com/category/latest-news/", apiUrl: "https://www.anzbloodstocknews.com/wp-json/wp/v2/posts?categories=67&per_page=20&_embed=1", feedUrl: "https://www.anzbloodstocknews.com/category/latest-news/feed/", baseUrl: "https://www.anzbloodstocknews.com", parser: "generic", pathHints: ["/category/latest-news/"], includeAnySameHost: true, preferTextProxy: false, allowPageTextProxy: false, tryDirect: true, structuredSourcesOnly: true },
         // 元HTMLはブラウザCORSを許可せず公開CORSプロキシも不安定なため、ReaderのMarkdownだけを短く試す。
         // 専用抽出器が/edition/YYYY-MM-DD/配下の個別記事へ限定し、固定ページの混入を防ぐ。
-        { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathPrefixes: ["/edition/"], pathHints: ["/edition/"], preferTextProxy: true, allowTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000 },
+        { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathPrefixes: ["/edition/"], pathHints: ["/edition/"], preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000 },
         { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"] },
         { id: "thestraight", name: "The Straight", region: "australia", url: "https://thestraight.com.au/", apiUrl: "https://thestraight.com.au/wp-json/wp/v2/posts?per_page=20&_embed=1", feedUrl: "https://thestraight.com.au/feed/", baseUrl: "https://thestraight.com.au", parser: "generic", pathHints: ["/news/", "/racing/", "/bloodstock/"], includeAnySameHost: true, tryDirect: true },
         // Readerは画像・完全見出し・日時を安定して返す一方、後続の公開CORSプロキシは長時間失敗する。
@@ -154,7 +154,6 @@
         partialFailedStatus: "一部取得失敗",
         showingStatus: "表示中",
         standbyStatus: "待機中",
-        standbyMessage: "更新ボタンで最新ヘッドラインを取得します。",
         lastUpdated: ({ date }) => date ? `最終更新: ${date}` : "未更新",
         resultSuffix: ({ filter, count }) => `${filter} 表示 ${count}件`,
         searchSuffix: ({ filter, count, days, total }) => `${filter}の検索結果 ${count}件 / ${days}日以内の全${total}件`,
@@ -221,7 +220,6 @@
         partialFailedStatus: "Some sources failed",
         showingStatus: "Showing",
         standbyStatus: "Ready",
-        standbyMessage: "Select Refresh to fetch the latest headlines.",
         lastUpdated: ({ date }) => date ? `Last updated: ${date}` : "Never updated",
         resultSuffix: ({ filter, count }) => `${filter}: ${count} article${count === 1 ? "" : "s"}`,
         searchSuffix: ({ filter, count, days, total }) => `${filter}: ${count} search result${count === 1 ? "" : "s"} out of ${total} article${total === 1 ? "" : "s"} from the past ${days} day${days === 1 ? "" : "s"}`,

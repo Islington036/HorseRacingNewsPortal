@@ -6,6 +6,10 @@
       MAX_DAYS_BACK: 3,
       REQUEST_TIMEOUT_MS: 9000,
       TITLE_HYDRATION_TIMEOUT_MS: 20000,
+      // 国内版も東スポ・サンスポ・見出し補完でReaderを共有するため、公開枠を20回/分未満へ抑える。
+      TEXT_PROXY_MIN_INTERVAL_MS: 3200,
+      TEXT_PROXY_RETRY_LIMIT: 1,
+      TEXT_PROXY_DEFAULT_RETRY_AFTER_MS: 60000,
       CACHE_KEY: "keiba-news-portal-cache-v2",
       SETTINGS_KEY: "keiba-news-portal-settings-v1",
       FALLBACK_THUMBNAIL:
@@ -52,7 +56,6 @@
             "https://tospo-keiba.jp/news?page=2"
           ],
           baseUrl: "https://tospo-keiba.jp",
-          parser: "tospo",
           readerCacheBust: true
         },
         {
@@ -61,7 +64,6 @@
           url: "https://www.sanspo.com/race/keiba/",
           sitemapUrl: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
           baseUrl: "https://www.sanspo.com",
-          parser: "generic",
           detailHydrationLimit: 8,
           detailHydrationConcurrency: 2
         },
@@ -115,7 +117,6 @@
         partialFailedStatus: "一部取得失敗",
         showingStatus: "表示中",
         standbyStatus: "待機中",
-        standbyMessage: "更新ボタンで最新ヘッドラインを取得します。",
         lastUpdated: ({ date }) => date ? `最終更新: ${date}` : "未更新",
         resultSuffix: ({ site, count }) => `${site} 表示 ${count}件`,
         searchSuffix: ({ site, count, days, total }) => `${site}の検索結果 ${count}件 / ${days}日以内の全${total}件`,
@@ -133,8 +134,7 @@
         emptyState: "表示できるニュースがありません。検索条件を変えるか、更新を試してください。",
         summaryEmpty: "該当サイト",
         storageError: "設定保存に失敗しました",
-        cacheError: "キャッシュ保存に失敗しました",
-        titleHydrated: "記事ページから見出しを補完しました"
+        cacheError: "キャッシュ保存に失敗しました"
       },
       en: {
         locale: "en-US",
@@ -170,7 +170,6 @@
         partialFailedStatus: "Partial Failure",
         showingStatus: "Showing",
         standbyStatus: "Ready",
-        standbyMessage: "Press refresh to fetch the latest headlines.",
         lastUpdated: ({ date }) => date ? `Last updated: ${date}` : "Not updated",
         resultSuffix: ({ site, count }) => `${site} showing ${count}`,
         searchSuffix: ({ site, count, days, total }) => `${site} search results ${count} / ${total} within ${days} day${days === 1 ? "" : "s"}`,
@@ -188,8 +187,7 @@
         emptyState: "No news to display. Change the search or filters, or refresh.",
         summaryEmpty: "Matching sites",
         storageError: "Failed to save settings",
-        cacheError: "Failed to save cache",
-        titleHydrated: "Headlines were completed from article pages"
+        cacheError: "Failed to save cache"
       }
     };
 

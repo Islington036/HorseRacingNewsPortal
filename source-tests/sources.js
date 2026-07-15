@@ -1,4 +1,4 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260715-reader-throttle";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260715-fetch-common";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&

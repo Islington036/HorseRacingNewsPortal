@@ -1,14 +1,28 @@
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_ITEMS = 8;
-const { mapWithConcurrency } = window.HorseRacingPortalCore;
+const {
+  createRequestRateLimiter,
+  isUrlHostname,
+  mapWithConcurrency,
+  setUrlQueryParameter
+} = window.HorseRacingPortalCore;
+const portalConfig = window.InternationalHorseRacingPortalDefinition
+  ? window.InternationalHorseRacingPortalDefinition.CONFIG
+  : {};
 
-// 本体と同じ公開プロキシ候補を使うが、テストでは選択された1媒体にしかアクセスしない。
+// 媒体専用テストも本体と同じReader公開枠を消費するため、開始間隔と429再試行設定を共有する。
+const textProxyRateLimiter = createRequestRateLimiter({
+  minStartIntervalMs: portalConfig.TEXT_PROXY_MIN_INTERVAL_MS ?? 3200,
+  retryLimit: portalConfig.TEXT_PROXY_RETRY_LIMIT ?? 1,
+  defaultRetryAfterMs: portalConfig.TEXT_PROXY_DEFAULT_RETRY_AFTER_MS ?? 60000
+});
+
+// URL変更時に本体とテスターが食い違わないよう、公開プロキシの組み立て関数も本体設定を正本にする。
 const PROXY_BUILDERS = [
-  (url) => "https://corsproxy.io/?" + encodeURIComponent(url),
-  (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
-  (url) => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(url)
-];
-const TEXT_PROXY = (url) => "https://r.jina.ai/" + url;
+  portalConfig.CORS_PROXY,
+  ...(portalConfig.CORS_PROXY_FALLBACKS || [])
+].filter((buildUrl) => typeof buildUrl === "function");
+const TEXT_PROXY = portalConfig.TEXT_PROXY;
 
 // 指定された媒体1件を取得し、記事データと画像の実読込結果をまとめて返す。
 export async function runSourceTest(source) {
@@ -131,25 +145,34 @@ async function fetchAndParseSource(source) {
 
 // 外部取得が止まったままにならないよう、媒体ごとのタイムアウトをAbortControllerで保証する。
 async function fetchText(url, options = {}) {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(
-    () => controller.abort(),
-    options.timeoutMs || DEFAULT_TIMEOUT_MS
-  );
+  // Readerの再試行ごとに通信タイマーを作り直し、レート制御の待機時間はHTTPタイムアウトへ含めない。
+  const requestOnce = async () => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(
+      () => controller.abort(),
+      options.timeoutMs || DEFAULT_TIMEOUT_MS
+    );
+
+    try {
+      return await fetch(url, {
+        signal: controller.signal,
+        credentials: "omit",
+        headers: options.headers || {}
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
 
   try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      credentials: "omit",
-      headers: options.headers || {}
-    });
+    const response = isUrlHostname(url, "r.jina.ai")
+      ? await textProxyRateLimiter.run(requestOnce)
+      : await requestOnce();
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return await response.text();
   } catch (error) {
     if (error.name === "AbortError") throw new Error("取得がタイムアウトしました");
     throw error;
-  } finally {
-    window.clearTimeout(timeoutId);
   }
 }
 
@@ -376,14 +399,7 @@ async function decorateItemsFromReader(items, source) {
 // Reader自体のURLへクエリを付けるのではなく、Readerが読む元URLへ付けることが重要。
 function buildTextProxyUrl(url, source) {
   if (!source.readerCacheBust) return TEXT_PROXY(url);
-
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set("portal_refresh", String(Date.now()));
-    return TEXT_PROXY(parsed.href);
-  } catch (_error) {
-    return TEXT_PROXY(url);
-  }
+  return TEXT_PROXY(setUrlQueryParameter(url, "portal_refresh", Date.now()));
 }
 
 // 媒体専用パーサーが返した画像にも、共通のパス・origin制約を必ず適用する。
