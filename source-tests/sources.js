@@ -1,4 +1,4 @@
-import { parseAtom, parseFeed, parseIrishFieldTopic, parseNewsSitemap, parseRacingComGraphql, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -8,6 +8,25 @@ const racingComSite = internationalConfig && internationalConfig.SITES.find((sit
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "irishracing_news_sitemap",
+    name: "Irish Racing News Sitemap",
+    url: "https://www.irishracing.com/newssitemap.xml",
+    baseUrl: "https://www.irishracing.com",
+    allowedOrigins: ["https://www.irishracing.com"],
+    caseInsensitivePath: true,
+    matchByTrailingNumericId: true,
+    pathPrefixes: ["/news/"],
+    parse: parseNewsSitemap,
+    readerDecorationUrls: ["https://www.irishracing.com/news"],
+    parseReaderDecoration: parseIrishRacingReaderCards,
+    decorationImagePattern: /\/photo_jpeg\//i,
+    decorationImageOrigins: ["https://www.irishracing.com"],
+    hydrationTimeoutMs: 20000,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
   {
     id: "attheraces_news_sitemap",
     name: "At The Races News Sitemap",

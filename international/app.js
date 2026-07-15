@@ -572,7 +572,7 @@ const state = {
             requestTimeoutMs: site.detailRequestTimeoutMs || CONFIG.REQUEST_TIMEOUT_MS
           });
           extractReaderDecorationItems(text, site).forEach((item) => {
-            const key = canonicalArticleUrl(item.url);
+            const key = canonicalArticleUrl(item.url, site);
             if (!key || decorationByUrl.has(key)) return;
             decorationByUrl.set(key, item);
           });
@@ -582,7 +582,7 @@ const state = {
       }
 
       return items.map((item) => {
-        const decoration = decorationByUrl.get(canonicalArticleUrl(item.url)) || {};
+        const decoration = decorationByUrl.get(canonicalArticleUrl(item.url, site)) || {};
         return {
           ...item,
           title: item.title || decoration.title || "",
@@ -627,10 +627,15 @@ const state = {
     }
 
     // 解析クエリ・hash・末尾スラッシュを除いたorigin+pathnameを、一覧との安全な結合キーにする。
-    function canonicalArticleUrl(value) {
+    function canonicalArticleUrl(value, site = {}) {
       try {
         const parsed = new URL(value);
-        return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+        const pathname = parsed.pathname.replace(/\/+$/, "");
+        if (site.matchByTrailingNumericId) {
+          const id = pathname.match(/\/(\d+)$/);
+          if (id) return `${parsed.origin}/article-id/${id[1]}`;
+        }
+        return `${parsed.origin}${site.caseInsensitivePath ? pathname.toLowerCase() : pathname}`;
       } catch (_error) {
         return "";
       }

@@ -240,7 +240,7 @@ async function decorateItemsFromReader(items, source) {
       if (typeof source.parseReaderDecoration === "function") {
         source.parseReaderDecoration(text).forEach((item) => {
           if (!isAllowedDecorationImage(item.thumbnail, source)) return;
-          const key = canonicalArticleUrl(item.url);
+          const key = canonicalArticleUrl(item.url, source);
           if (key && !decorationByUrl.has(key)) decorationByUrl.set(key, item);
         });
         continue;
@@ -248,9 +248,8 @@ async function decorateItemsFromReader(items, source) {
 
       for (const match of String(text || "").matchAll(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/[^)]+)\)/g)) {
         const image = unwrapImageProxyUrl(match[1]);
-        const key = canonicalArticleUrl(match[2]);
-        if (!key || !isUsableArticleImage(image)) continue;
-        if (source.decorationImagePattern && !source.decorationImagePattern.test(image)) continue;
+        const key = canonicalArticleUrl(match[2], source);
+        if (!key || !isAllowedDecorationImage(image, source)) continue;
         if (!decorationByUrl.has(key)) decorationByUrl.set(key, { thumbnail: image });
       }
     } catch (_error) {
@@ -260,7 +259,7 @@ async function decorateItemsFromReader(items, source) {
   }
 
   return items.map((item) => {
-    const decoration = decorationByUrl.get(canonicalArticleUrl(item.url)) || {};
+    const decoration = decorationByUrl.get(canonicalArticleUrl(item.url, source)) || {};
     return {
       ...item,
       title: item.title || decoration.title || "",
@@ -333,6 +332,32 @@ export function parseTospoReaderCards(text) {
   return items;
 }
 
+// Irish Racing一覧の通常カードと、画像・本文・時刻が一つのリンクへ圧縮された先頭カードを共通形式へ変換する。
+// Sitemap側が見出しと日時を持つため、ここでは記事URLと公式写真だけを厳密に取り出す。
+export function parseIrishRacingReaderCards(text) {
+  const items = [];
+  const raw = String(text || "");
+
+  const standardPattern = /\[!\[[^\]]*\]\((https?:\/\/www\.irishracing\.com\/photo_jpeg\/[^)]+)\)\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)#{2,6}\s+\[[^\]]+\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)/gi;
+  for (const match of raw.matchAll(standardPattern)) {
+    if (canonicalArticleUrl(match[2], { caseInsensitivePath: true }) !== canonicalArticleUrl(match[3], { caseInsensitivePath: true })) continue;
+    items.push({ url: match[3], thumbnail: match[1] });
+  }
+
+  const compactPattern = /\[!\[[^\]]*\]\((https?:\/\/www\.irishracing\.com\/photo_jpeg\/[^)]+)\)\s*#{2,6}\s*[^\]]+\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)/gi;
+  for (const match of raw.matchAll(compactPattern)) {
+    items.push({ url: match[2], thumbnail: match[1] });
+  }
+
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = canonicalArticleUrl(item.url, { caseInsensitivePath: true });
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // Jina Readerの記事出力から、ページタイトル・公開日時・最初の実写真を抽出する。
 function parseReaderArticle(text, articleUrl) {
   const raw = String(text || "");
@@ -356,10 +381,15 @@ function sameArticleUrl(left, right) {
 }
 
 // origin+pathnameだけを結合キーにし、解析パラメータや末尾スラッシュの差を無視する。
-function canonicalArticleUrl(value) {
+function canonicalArticleUrl(value, source = {}) {
   try {
     const parsed = new URL(value);
-    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    if (source.matchByTrailingNumericId) {
+      const id = pathname.match(/\/(\d+)$/);
+      if (id) return `${parsed.origin}/article-id/${id[1]}`;
+    }
+    return `${parsed.origin}${source.caseInsensitivePath ? pathname.toLowerCase() : pathname}`;
   } catch (_error) {
     return "";
   }
