@@ -904,7 +904,7 @@
       }
       // 本体がDataDomeで自動取得を拒否するPaulick Reportは、Bing News RSSの索引から元記事URLを復元する。
       if (site.id === "paulickreport") return extractPaulickReportBingItems(data, site);
-      if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
+      if (site.id === "ttrausnz") return [...extractTtrAusNzItems(doc, site, data), ...extractTtrAusNzMarkdownItems(rawText, site)];
       // TDN、ANZ Bloodstock、The Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
       // TDNはRSSを予備経路として残しており、RSSレスポンス時はdataがnullになるため空配列を返す。
       // その場合もPARSERS.generic側のextractFeedItemsが続けてRSSを抽出する。
@@ -1511,9 +1511,10 @@
     }
 
     // TTR AusNZのNext.js初期JSONから、エディション内の記事一覧を抽出する。
-    function extractTtrAusNzItems(doc, site) {
+    // 将来JSON APIへ切り替えた場合も再利用できるよう、第三引数の構造化データを最優先する。
+    function extractTtrAusNzItems(doc, site, structuredData) {
       const script = doc.querySelector("#__NEXT_DATA__");
-      const data = script ? safeJsonParse(script.textContent) : null;
+      const data = structuredData || (script ? safeJsonParse(script.textContent) : null);
       if (!data) return [];
 
       const skipTypes = new Set(["interstitial", "sponsored", "social", "results", "winners", "top20"]);
@@ -1546,6 +1547,49 @@
 
       // JSON深度走査の順序はNext.js内部構造で変わるため、返却前に公開時刻の降順を明示する。
       return items.sort((left, right) => right.publishedAt - left.publishedAt);
+    }
+
+    // TTR AusNZのReader Markdownから、日付付きエディション記事を抽出する。
+    // Readerは複数の#####見出しを改行なしで連結することがあるため、行単位ではなく全文をglobal検索する。
+    function extractTtrAusNzMarkdownItems(text, site) {
+      if (!text) return [];
+
+      const items = [];
+      const articlePattern = /#{4,5}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?ttrausnz\.com\.au\/edition\/(\d{4}-\d{2}-\d{2})\/([^/?#)]+)[^)]*)\)/gi;
+
+      for (const match of String(text).matchAll(articlePattern)) {
+        const url = match[2];
+        const slug = match[4];
+        if (isTtrAusNzFixedPage(slug)) continue;
+
+        // 見出しラベルには「タイトル＋要約＋日付」が連結されている。
+        // URL slugと一致する先頭部分を探し、要約や日付がヘッドラインへ混ざらないようにする。
+        const title = extractTitleMatchingSlug(match[1], slug) || titleFromUrlSlug(url);
+        if (!isLikelyHeadline(title)) continue;
+
+        items.push({
+          title,
+          url,
+          publishedAt: parseDateFromUrl(url) || parseDate(match[3]),
+          // 現在のReader一覧には記事写真が含まれないため、空値は本体のダミー画像へ委ねる。
+          thumbnail: "",
+          source: site.name
+        });
+      }
+
+      return items.sort((left, right) => right.publishedAt - left.publishedAt);
+    }
+
+    // 「タイトル＋要約」からURL slugと完全一致するタイトル部分だけを復元する。
+    function extractTitleMatchingSlug(label, slug) {
+      const words = cleanWhitespace(label).split(" ").filter(Boolean);
+
+      for (let index = 1; index <= words.length; index += 1) {
+        const candidate = words.slice(0, index).join(" ");
+        if (slugifyPathSegment(candidate) === slugifyPathSegment(slug)) return candidate;
+      }
+
+      return "";
     }
 
     // エディション内へ毎日挿入される案内・索引ページを、記事種別に依存せずslugで除外する。

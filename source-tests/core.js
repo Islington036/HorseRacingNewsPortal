@@ -98,9 +98,12 @@ async function fetchAndParseSource(source) {
   if (source.allowTextProxy && source.preferTextProxy) {
     candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
-  PROXY_BUILDERS.forEach((buildUrl, index) => {
-    candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
-  });
+  if (!source.textProxyOnly) {
+    // Reader専用媒体では、既知の失敗経路を順番に待ってテスト結果が遅くならないよう公開CORSプロキシを除外する。
+    PROXY_BUILDERS.forEach((buildUrl, index) => {
+      candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
+    });
+  }
   if (source.allowTextProxy && !source.preferTextProxy) {
     // Sitemapの生XMLを公開CORSプロキシで取得できない場合だけ、ReaderからURL候補を得る。
     // ReaderではXMLのタイトル・日時・画像が失われるため、後段のhydrateItemsFromReaderで記事詳細を補う。
@@ -788,6 +791,51 @@ export function parseTtrAusNzNextData(text) {
   });
 
   return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// TTR AusNZのReader Markdownから、エディション日付を持つ個別記事だけを抽出する。
+// 見出しが改行なしで連結される実データに合わせ、全文のリンク構造をglobal検索する。
+export function parseTtrAusNzReader(text) {
+  const items = [];
+  const articlePattern = /#{4,5}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?ttrausnz\.com\.au\/edition\/(\d{4}-\d{2}-\d{2})\/([^/?#)]+)[^)]*)\)/gi;
+
+  for (const match of String(text || "").matchAll(articlePattern)) {
+    const url = match[2];
+    const slug = match[4];
+    if (isTtrAusNzFixedPage(slug)) continue;
+
+    const title = extractTtrTitleMatchingSlug(match[1], slug) || titleFromSourceTestUrl(url);
+    if (!title) continue;
+    items.push({
+      title,
+      url,
+      publishedAt: match[3],
+      // Reader一覧に画像がない場合は空値のまま返し、本体のダミー表示を正常系として確認する。
+      thumbnail: ""
+    });
+  }
+
+  return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// Readerラベル先頭から、URL slugと一致するタイトル部分だけを切り出す。
+function extractTtrTitleMatchingSlug(label, slug) {
+  const words = cleanText(label).split(" ").filter(Boolean);
+  for (let index = 1; index <= words.length; index += 1) {
+    const candidate = words.slice(0, index).join(" ");
+    if (slugifySourceTestPath(candidate) === slugifySourceTestPath(slug)) return candidate;
+  }
+  return "";
+}
+
+// slug一致が取れない例外見出しでも空欄にせず、URLから最低限読めるタイトルを作る。
+function titleFromSourceTestUrl(value) {
+  try {
+    const slug = new URL(String(value || "")).pathname.split("/").filter(Boolean).pop() || "";
+    return slug.replace(/-/g, " ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+  } catch (_error) {
+    return "";
+  }
 }
 
 // TTRのニュース一覧に常設される案内・索引ページをslugで除外する。
