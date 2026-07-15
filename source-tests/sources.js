@@ -13,6 +13,7 @@ export const SOURCES = [
     name: "東スポ競馬 News Sitemap",
     url: "https://tospo-keiba.jp/sitemap_news_1.xml",
     baseUrl: "https://tospo-keiba.jp",
+    allowedOrigins: ["https://tospo-keiba.jp"],
     pathPrefixes: ["/breaking_news/"],
     parse: parseNewsSitemap,
     allowTextProxy: true,
@@ -23,6 +24,8 @@ export const SOURCES = [
     ],
     parseReaderDecoration: parseTospoReaderCards,
     decorationImagePattern: /\/images\/article\/thumbnail\//i,
+    decorationImageOrigins: ["https://tospo-keiba.jp"],
+    readerCacheBust: true,
     hydrateFromReader: true,
     disableReaderImageFallback: true,
     // 東スポのサイトマップは通常20件弱なので、既定8件で打ち切らず2ページ目の記事まで結合を検証する。

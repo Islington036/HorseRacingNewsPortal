@@ -263,7 +263,17 @@ const state = {
 
     // Jina Readerを直接呼び出す。公開CORSプロキシを二重に通さないため、Reader URLへ通常のfetchを行う。
     async function fetchReaderText(url) {
-      return fetchProxyText(CONFIG.TEXT_PROXY(url), CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
+      // 東スポではReaderの通常キャッシュが原サイトより遅れ、最新記事が欠ける事例が確認された。
+      // 元URLへ更新時刻を付けるとReaderが最新内容を再取得するため、更新操作ごとに一意なURLとして要求する。
+      let freshUrl = url;
+      try {
+        const parsed = new URL(url);
+        parsed.searchParams.set("portal_refresh", String(Date.now()));
+        freshUrl = parsed.href;
+      } catch (_error) {
+        // 設定URLが壊れていても、元URLの取得を一度試して通常の通信エラーへ委ねる。
+      }
+      return fetchProxyText(CONFIG.TEXT_PROXY(freshUrl), CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
     }
 
     // Google News Sitemapの生XMLと、ReaderがMarkdown化したURL一覧の両方へ対応する。

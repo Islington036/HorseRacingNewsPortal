@@ -74,7 +74,7 @@ async function fetchAndParseSource(source) {
     candidates.push({ url: source.url, route: "direct" });
   }
   if (source.allowTextProxy && source.preferTextProxy) {
-    candidates.push({ url: TEXT_PROXY(source.url), route: "text-proxy" });
+    candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
   PROXY_BUILDERS.forEach((buildUrl, index) => {
     candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
@@ -82,7 +82,7 @@ async function fetchAndParseSource(source) {
   if (source.allowTextProxy && !source.preferTextProxy) {
     // Sitemapの生XMLを公開CORSプロキシで取得できない場合だけ、ReaderからURL候補を得る。
     // ReaderではXMLのタイトル・日時・画像が失われるため、後段のhydrateItemsFromReaderで記事詳細を補う。
-    candidates.push({ url: TEXT_PROXY(source.url), route: "text-proxy" });
+    candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
 
   let lastError = null;
@@ -211,7 +211,7 @@ async function hydrateItemsFromReader(items, source) {
     if (item.title && item.publishedAt && item.thumbnail) return item;
 
     try {
-      const text = await fetchText(TEXT_PROXY(item.url), { timeoutMs: source.hydrationTimeoutMs });
+      const text = await fetchText(buildTextProxyUrl(item.url, source), { timeoutMs: source.hydrationTimeoutMs });
       const detail = parseReaderArticle(text, item.url);
       return {
         ...item,
@@ -232,9 +232,10 @@ async function decorateItemsFromReader(items, source) {
 
   for (const listingUrl of source.readerDecorationUrls) {
     try {
-      const text = await fetchText(TEXT_PROXY(listingUrl), { timeoutMs: source.hydrationTimeoutMs });
+      const text = await fetchText(buildTextProxyUrl(listingUrl, source), { timeoutMs: source.hydrationTimeoutMs });
       if (typeof source.parseReaderDecoration === "function") {
         source.parseReaderDecoration(text).forEach((item) => {
+          if (!isAllowedDecorationImage(item.thumbnail, source)) return;
           const key = canonicalArticleUrl(item.url);
           if (key && !decorationByUrl.has(key)) decorationByUrl.set(key, item);
         });
@@ -263,6 +264,37 @@ async function decorateItemsFromReader(items, source) {
       thumbnail: item.thumbnail || decoration.thumbnail || ""
     };
   });
+}
+
+// Readerのキャッシュ遅延が確認された媒体だけ、取得元URLへ時刻クエリを付けて最新レスポンスを要求する。
+// Reader自体のURLへクエリを付けるのではなく、Readerが読む元URLへ付けることが重要。
+function buildTextProxyUrl(url, source) {
+  if (!source.readerCacheBust) return TEXT_PROXY(url);
+
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("portal_refresh", String(Date.now()));
+    return TEXT_PROXY(parsed.href);
+  } catch (_error) {
+    return TEXT_PROXY(url);
+  }
+}
+
+// 媒体専用パーサーが返した画像にも、共通のパス・origin制約を必ず適用する。
+function isAllowedDecorationImage(value, source) {
+  const image = unwrapImageProxyUrl(value);
+  if (!isUsableArticleImage(image)) return false;
+  if (source.decorationImagePattern && !source.decorationImagePattern.test(image)) return false;
+
+  if (Array.isArray(source.decorationImageOrigins) && source.decorationImageOrigins.length > 0) {
+    try {
+      return source.decorationImageOrigins.includes(new URL(image).origin);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // 東スポ競馬のReader一覧カードから、同じ行の画像・記事URL・完全見出しと直後の日付時刻を読む。
@@ -569,9 +601,14 @@ function matchesSourcePath(value, source) {
   }
 
   const path = parsed.pathname.toLowerCase();
+  const allowedOrigins = Array.isArray(source.allowedOrigins) ? source.allowedOrigins : [];
   const prefixes = Array.isArray(source.pathPrefixes) ? source.pathPrefixes : [];
   const includes = Array.isArray(source.pathHints) ? source.pathHints : [];
   const excludes = Array.isArray(source.excludePathHints) ? source.excludePathHints : [];
+
+  if (allowedOrigins.length && !allowedOrigins.includes(parsed.origin)) {
+    return false;
+  }
 
   if (prefixes.length && !prefixes.some((prefix) => path.startsWith(String(prefix).toLowerCase()))) {
     return false;
