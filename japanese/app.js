@@ -484,9 +484,19 @@
       throw lastError || new Error(t("fetchFailed"));
     }
 
-    async function fetchProxyText(proxyUrl, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS, accept) {
+    async function fetchProxyText(proxyUrl, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS, accept, externalSignal) {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      // 呼び出し元が媒体全体の期限を管理している場合、その中止を現在のfetchにも伝播する。
+      // これがないとPromise側だけがタイムアウトし、古いHTTP接続が背後で残り続ける。
+      const abortFromExternal = () => controller.abort();
+      if (externalSignal) {
+        if (externalSignal.aborted) {
+          controller.abort();
+        } else {
+          externalSignal.addEventListener("abort", abortFromExternal, { once: true });
+        }
+      }
 
       try {
         const response = await fetch(proxyUrl, {
@@ -506,6 +516,9 @@
         throw error;
       } finally {
         window.clearTimeout(timeoutId);
+        if (externalSignal) {
+          externalSignal.removeEventListener("abort", abortFromExternal);
+        }
       }
     }
 
@@ -600,7 +613,9 @@
     function extractHochiItems(doc, site) {
       const items = [];
 
-      doc.querySelectorAll(".article-list__unit, article, li").forEach((container) => {
+      // タグ本文の正式な記事カードだけを対象にする。
+      // 汎用liまで広げると、右カラムの野球・芸能コラムにも記事URLと日時があるため競馬記事へ混入する。
+      doc.querySelectorAll(".article-list__unit").forEach((container) => {
         // 報知の一覧はリンク全体に配信時刻も含まれるため、リンクtextContentではなくタイトル専用要素を優先する。
         const anchor = container.matches("a[href*='/articles/']")
           ? container
@@ -807,19 +822,24 @@
 
       if (targets.length === 0) return items;
 
-      const hydratedPairs = await Promise.all(targets.map(async (item) => {
-        try {
-          // 記事ページ補完は補助処理なので、通常取得より短い上限時間で切り上げる。
-          // 1サイト内では並列に走らせ、見出し補完待ちで更新全体が長く止まらないようにする。
-          const articleHtml = await fetchTitleHydrationTextWithDeadline(item.url, CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
-          const fullTitle = extractFullTitleFromArticle(articleHtml, item.title);
-          return [item.url, preferFullTitle(item.title, fullTitle)];
-        } catch (_error) {
-          // 記事ページ側の取得に失敗しても、一覧の省略見出しで表示継続する。
-          // ここをエラー扱いにすると、ヘッドライン自体が取れているサイトまで失敗表示になってしまう。
-          return [item.url, item.title];
+      // 対象件数を増やしても記事ページへ一斉接続しないよう、媒体設定の同時実行数で補完する。
+      const hydratedPairs = await mapWithConcurrency(
+        targets,
+        site.titleHydrationConcurrency || 4,
+        async (item) => {
+          try {
+            // 記事ページ補完は補助処理なので、通常取得より短い上限時間で切り上げる。
+            // 1サイト内では並列に走らせ、見出し補完待ちで更新全体が長く止まらないようにする。
+            const articleHtml = await fetchTitleHydrationTextWithDeadline(item.url, CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
+            const fullTitle = extractFullTitleFromArticle(articleHtml, item.title);
+            return [item.url, preferFullTitle(item.title, fullTitle)];
+          } catch (_error) {
+            // 記事ページ側の取得に失敗しても、一覧の省略見出しで表示継続する。
+            // ここをエラー扱いにすると、ヘッドライン自体が取れているサイトまで失敗表示になってしまう。
+            return [item.url, item.title];
+          }
         }
-      }));
+      );
 
       const hydratedTitleByUrl = new Map(hydratedPairs);
       return items.map((item) => {
@@ -829,20 +849,21 @@
     }
 
     async function fetchTitleHydrationTextWithDeadline(url, timeoutMs) {
-      const request = fetchTitleHydrationText(url);
-      request.catch(() => {
-        // Promise.raceでタイムアウトした後に記事ページ補完側が失敗しても、未処理例外にしないための吸収。
-      });
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
-      return Promise.race([
-        request,
-        new Promise((_, reject) => {
-          window.setTimeout(() => reject(new Error(t("timeout"))), timeoutMs);
-        })
-      ]);
+      try {
+        return await fetchTitleHydrationText(url, controller.signal);
+      } catch (error) {
+        // 全体期限による中止は、個別プロキシの失敗と区別せず利用者向けのタイムアウトとして扱う。
+        if (controller.signal.aborted) throw new Error(t("timeout"));
+        throw error;
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
     }
 
-    async function fetchTitleHydrationText(url) {
+    async function fetchTitleHydrationText(url, signal) {
       // 見出し補完は記事ページを読む補助処理。日刊スポーツの記事ページはAllOriginsが遅く失敗し、
       // CodeTabsが成功しやすいため、通常取得とは別にCodeTabsを先に試して省略見出しを補完しやすくする。
       const proxyUrls = [
@@ -855,9 +876,11 @@
 
       for (const proxyUrl of proxyUrls) {
         try {
-          return await fetchProxyText(proxyUrl, CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
+          return await fetchProxyText(proxyUrl, CONFIG.TITLE_HYDRATION_TIMEOUT_MS, undefined, signal);
         } catch (error) {
           lastError = error;
+          // 呼び出し元の全体期限に達した後は、残りのプロキシを試さず直ちに終了する。
+          if (signal && signal.aborted) break;
         }
       }
 
