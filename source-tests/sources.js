@@ -11,6 +11,25 @@ const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url="
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
   {
+    id: "sanspo_keiba_sitemap_reader",
+    name: "サンスポ競馬 Sitemap + Reader",
+    url: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
+    baseUrl: "https://www.sanspo.com",
+    allowedOrigins: ["https://www.sanspo.com"],
+    pathPrefixes: ["/race/article/"],
+    articlePathPattern: /^\/race\/article\/(?:general|basic)\/20\d{6}-[A-Z0-9]+\/?$/i,
+    parse: parseNewsSitemap,
+    tryDirect: true,
+    allowTextProxy: true,
+    hydrateFromReader: true,
+    hydrationLimit: 8,
+    hydrationConcurrency: 2,
+    hydrationTimeoutMs: 20000,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
+  {
     id: "bloodhorse_reader",
     name: "BloodHorse Reader Listing",
     url: "https://www.bloodhorse.com/horse-racing/articles/index",
