@@ -412,6 +412,96 @@ export function parseDrfReaderCards(text) {
   return items;
 }
 
+// BloodHorse一覧Readerの各カードから、同一URLの写真・完全見出し・米東部の相対公開時刻を抽出する。
+// 画像リンクと見出しリンクのURL一致を必須にし、著者リンクや前後カードの写真を誤結合しない。
+export function parseBloodHorseReaderCards(text) {
+  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
+  const items = [];
+  let pendingImage = null;
+
+  lines.forEach((line, index) => {
+    const imageLink = line.match(/^\*?\s*\[!\[[^\]]*\]\((https?:\/\/cdn-images\.bloodhorse\.com\/[^)]+)\)\]\((https?:\/\/(?:www\.)?bloodhorse\.com\/horse-racing\/articles\/\d+\/[^\s)\"]+)/i);
+    if (imageLink) {
+      pendingImage = { thumbnail: imageLink[1], url: imageLink[2] };
+      return;
+    }
+
+    const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?bloodhorse\.com\/horse-racing\/articles\/\d+\/[^)]+)\)$/i);
+    if (!heading) return;
+
+    const nearbyDate = lines
+      .slice(index + 1, index + 9)
+      .map((value) => value.replace(/^\*?\s*/, ""))
+      .find((value) => /^(Today|Yesterday),\s*\d{1,2}:\d{2}\s*(?:AM|PM)$/i.test(value));
+    const publishedAt = parseRelativeDateInTimeZone(nearbyDate, "America/New_York");
+    const thumbnail = pendingImage && sameArticleUrl(pendingImage.url, heading[2])
+      ? pendingImage.thumbnail
+      : "";
+    pendingImage = null;
+
+    if (!publishedAt) return;
+    items.push({ title: heading[1], url: heading[2], publishedAt, thumbnail });
+  });
+
+  return items;
+}
+
+// `Today, 7:58 PM`等を指定地域の暦日・時刻として解釈し、絶対時刻のISO文字列へ変換する。
+// UTCとの差は対象日のIntl出力から求めるため、米東部の夏時間・標準時間の切替にも追従する。
+function parseRelativeDateInTimeZone(value, timeZone) {
+  const match = String(value || "").match(/^(Today|Yesterday),\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return "";
+
+  const nowParts = timeZoneParts(new Date(), timeZone);
+  const calendarDate = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day));
+  if (/^yesterday$/i.test(match[1])) calendarDate.setUTCDate(calendarDate.getUTCDate() - 1);
+
+  let hour = Number(match[2]);
+  if (/pm/i.test(match[4]) && hour < 12) hour += 12;
+  if (/am/i.test(match[4]) && hour === 12) hour = 0;
+
+  return zonedDateToUtc({
+    year: calendarDate.getUTCFullYear(),
+    month: calendarDate.getUTCMonth() + 1,
+    day: calendarDate.getUTCDate(),
+    hour,
+    minute: Number(match[3])
+  }, timeZone).toISOString();
+}
+
+// Dateを指定タイムゾーンの年月日時分へ分解する。
+function timeZoneParts(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)])
+  );
+  return parts;
+}
+
+// 指定タイムゾーンの壁時計をUTCへ変換する。初回推定時刻の地域差を差し引いて実時刻を得る。
+function zonedDateToUtc(parts, timeZone) {
+  const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute));
+  const represented = timeZoneParts(utcGuess, timeZone);
+  const representedAsUtc = Date.UTC(
+    represented.year,
+    represented.month - 1,
+    represented.day,
+    represented.hour,
+    represented.minute
+  );
+  return new Date(utcGuess.getTime() - (representedAsUtc - utcGuess.getTime()));
+}
+
 // Jina Readerの記事出力から、ページタイトル・公開日時・最初の実写真を抽出する。
 function parseReaderArticle(text, articleUrl) {
   const raw = String(text || "");
