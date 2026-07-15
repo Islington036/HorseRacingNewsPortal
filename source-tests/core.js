@@ -39,7 +39,8 @@ export async function runSourceTest(source) {
   const thumbnailItems = checkedItems.filter((item) => isHttpUrl(item.thumbnail)).length;
   const missingThumbnails = itemCount - thumbnailItems;
   const loadedImages = checkedItems.filter((item) => item.imageLoaded).length;
-  const minimumItems = source.minimumItems || 1;
+  // 共有RSSの特定カテゴリは更新がないと0件になるため、明示された0を既定値1で上書きしない。
+  const minimumItems = source.minimumItems ?? 1;
   const minimumImageCoverage = source.minimumImageCoverage ?? 0.75;
   const imageCoverage = itemCount ? loadedImages / itemCount : 0;
   const routeMatched = !source.requiredRoute || response.route === source.requiredRoute;
@@ -148,6 +149,9 @@ export function parseFeed(text, source) {
       imageFromHtml(description)
     );
 
+    const categories = [...entry.querySelectorAll("category")].map((element) => cleanText(element.textContent));
+    if (source.rssCategory && !categories.includes(source.rssCategory)) return null;
+
     return {
       title: textOf(entry, "title"),
       url: firstValue(
@@ -162,7 +166,7 @@ export function parseFeed(text, source) {
       ),
       thumbnail
     };
-  });
+  }).filter(Boolean);
 }
 
 // Google News Sitemapから見出し・記事URL・公開日時・画像を抽出する。

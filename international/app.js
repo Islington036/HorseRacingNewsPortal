@@ -308,7 +308,10 @@ const state = {
                 ? sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy
                   ? "xml-or-reader"
                   : "xml"
-                : "html"
+                : "html",
+          // Sitemapを正本にする媒体だけ、一覧Readerからの画像装飾を有効にする。
+          // HTMLフォールバック時まで同じ一覧を再取得しないよう、取得元URLごとに設定を絞る。
+          readerDecorationUrls: sourceUrl === site.sitemapUrl ? site.readerDecorationUrls || [] : []
         };
 
         for (const proxyUrl of buildProxyUrls(sourceUrl, requestSite)) {
@@ -536,6 +539,11 @@ const state = {
       }
       const parser = PARSERS[site.parser] || PARSERS.generic;
       let rawItems = parser(doc, site, responseText, json);
+      if (site.readerDecorationUrls && site.readerDecorationUrls.length > 0) {
+        // Sitemapのタイトル・日時・URLは維持し、一覧カードと完全URL一致した画像だけを補う。
+        // タイトル一致は同名記事や省略見出しの誤結合を起こすため使用しない。
+        rawItems = await decorateRawItemsFromReader(rawItems, site);
+      }
       if (site.readerDetailHydration) {
         rawItems = await hydrateReaderDetailItems(rawItems, site);
       }
@@ -547,6 +555,85 @@ const state = {
           .filter(Boolean)
           .filter((item) => item.title && item.url && item.publishedAt instanceof Date && !Number.isNaN(item.publishedAt.getTime()))
       ).slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+    }
+
+    // 構造化経路の記事へ、一覧Readerに存在する同一URLカードの不足項目を装飾する。
+    // 一覧の片方が失敗しても取得済みページで継続し、画像欠損は既存ダミー表示へ委ねる。
+    async function decorateRawItemsFromReader(items, site) {
+      const decorationByUrl = new Map();
+
+      for (const listingUrl of site.readerDecorationUrls) {
+        try {
+          const text = await fetchText(listingUrl, {
+            ...site,
+            allowTextProxy: true,
+            preferTextProxy: true,
+            textProxyOnly: true,
+            requestTimeoutMs: site.detailRequestTimeoutMs || CONFIG.REQUEST_TIMEOUT_MS
+          });
+          extractReaderDecorationItems(text, site).forEach((item) => {
+            const key = canonicalArticleUrl(item.url);
+            if (!key || decorationByUrl.has(key)) return;
+            decorationByUrl.set(key, item);
+          });
+        } catch (_error) {
+          // 装飾は補助経路。Sitemap本体が取得できていれば、写真なし記事として安全に表示を続ける。
+        }
+      }
+
+      return items.map((item) => {
+        const decoration = decorationByUrl.get(canonicalArticleUrl(item.url)) || {};
+        return {
+          ...item,
+          title: item.title || decoration.title || "",
+          publishedAt: item.publishedAt || decoration.publishedAt || null,
+          thumbnail: item.thumbnail || decoration.thumbnail || ""
+        };
+      });
+    }
+
+    // 一覧Readerから記事URLに直接結び付いた画像を抽出する。
+    // Irish Racingのように専用パーサーが既にある媒体は、その結果を同じURL結合形式へ再利用する。
+    function extractReaderDecorationItems(text, site) {
+      if (site.readerDecorationParser === "irishracing") {
+        return extractIrishRacingMarkdownItems(text, site).filter((item) => isAllowedDecorationImage(item.thumbnail, site));
+      }
+
+      const items = [];
+      for (const match of String(text || "").matchAll(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/[^)]+)\)/g)) {
+        const thumbnail = unwrapImageProxyUrl(match[1]);
+        const url = match[2];
+        if (!isCandidateArticleUrl(url, site) || !isAllowedDecorationImage(thumbnail, site)) continue;
+        items.push({ url, thumbnail });
+      }
+      return items;
+    }
+
+    // 媒体設定で画像originやパスを限定できるようにし、ロゴ・広告・別記事画像の混入を防ぐ。
+    function isAllowedDecorationImage(value, site) {
+      const image = absoluteUrl(unwrapImageProxyUrl(value), site.baseUrl);
+      if (!isUsableImageUrl(image)) return false;
+      if (site.readerDecorationImagePattern && !site.readerDecorationImagePattern.test(image)) return false;
+
+      const allowedOrigins = site.readerDecorationImageOrigins || [];
+      if (allowedOrigins.length > 0) {
+        try {
+          return allowedOrigins.includes(new URL(image).origin);
+        } catch (_error) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // 解析クエリ・hash・末尾スラッシュを除いたorigin+pathnameを、一覧との安全な結合キーにする。
+    function canonicalArticleUrl(value) {
+      try {
+        const parsed = new URL(value);
+        return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+      } catch (_error) {
+        return "";
+      }
     }
 
     // Jina ReaderがAPI JSONの前へ説明ヘッダーを付けた場合に、最外のJSON本文だけを復元する。
@@ -711,9 +798,10 @@ const state = {
             const detail = extractReaderArticleMetadata(detailText);
             return {
               ...item,
-              title: detail.title || item.title,
-              publishedAt: detail.publishedAt || item.publishedAt,
-              thumbnail: detail.thumbnail || item.thumbnail
+              // SitemapやRSSの値を正本とし、Reader詳細は欠損項目だけに使う。
+              title: item.title || detail.title,
+              publishedAt: item.publishedAt || detail.publishedAt,
+              thumbnail: item.thumbnail || detail.thumbnail
             };
           } catch (_error) {
             return null;
@@ -1489,6 +1577,9 @@ const state = {
           attrOf(entry, "enclosure", "url") ||
           extractImageFromHtml(encoded);
 
+        const categories = [...entry.querySelectorAll("category")].map((element) => cleanWhitespace(element.textContent));
+        // 同じRSSを複数ビューで共有する媒体は、category完全一致で混入を防ぐ。
+        if (site.rssCategory && !categories.includes(site.rssCategory)) return;
         if (!title || !link || !isCandidateArticleUrl(link, site)) return;
 
         items.push({
