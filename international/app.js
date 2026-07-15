@@ -329,10 +329,7 @@
             // 現在はRacing.comの公開APIヘッダーが対象で、今後ほかの媒体が追加されても同じ境界を維持する。
             const requestHeaders = proxyUrl === sourceUrl ? site.requestHeaders || {} : {};
             const html = await fetchProxyText(proxyUrl, requestHeaders, requestSite.requestTimeoutMs);
-            const items = site.id === "paulickreport"
-              // Paulick Reportの一覧ページには日付が出ないため、記事詳細ページのメタ情報で公開日時を補完する。
-              ? await parsePaulickReportResponse(html, site)
-              : await parseSiteResponse(html, requestSite);
+            const items = await parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
               if (site.mergeStructuredSources && sourceUrl !== site.url) {
@@ -372,67 +369,6 @@
       throw lastError || new Error(t("noExtract"));
     }
 
-    // Paulick Reportの一覧レスポンスから候補を拾い、個別記事ページのPublished Timeで日時を補完する。
-    async function parsePaulickReportResponse(rawText, site) {
-      const candidates = extractPaulickReportCandidates(rawText, site)
-        // 一覧の先頭に近いほど新しい記事なので、詳細取得数は設定上限までに絞る。
-        // すべての記事詳細を読むと公開プロキシに負荷が寄り、更新全体も遅くなる。
-        .slice(0, site.detailHydrationLimit || site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
-
-      if (!candidates.length) return [];
-
-      const hydratedItems = await mapWithConcurrency(
-        candidates,
-        site.detailHydrationConcurrency || 3,
-        (candidate) => hydratePaulickReportCandidate(candidate, site)
-      );
-
-      return dedupeByUrl(
-        hydratedItems
-          .filter(Boolean)
-          .map((item, index) => normalizeItem(item, site, index))
-          .filter(Boolean)
-          .filter((item) => item.title && item.url && item.publishedAt instanceof Date && !Number.isNaN(item.publishedAt.getTime()))
-      ).slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
-    }
-
-    // Paulick Reportの一覧HTMLまたはJina Markdownから、記事URL・見出し・一覧画像だけを候補として抽出する。
-    function extractPaulickReportCandidates(rawText, site) {
-      const candidates = [];
-      const text = String(rawText || "");
-
-      // Jina Readerでは「View post」リンクの直後に一覧用画像が続く形で出るため、ここから画像付き候補を作る。
-      const viewPostPattern = /\[View post:\s*([^\]]+)\]\((https?:\/\/paulickreport\.com\/news\/[^)]+)\)(?:!\[[^\]]*\]\((https?:\/\/[^)]+)\))?/gi;
-      for (const match of text.matchAll(viewPostPattern)) {
-        const title = cleanTitle(match[1]);
-        const url = match[2];
-        if (!isLikelyHeadline(title) || !isPaulickReportArticleUrl(url, site)) continue;
-        candidates.push({
-          title,
-          url,
-          thumbnail: pickUsableImage(match[3]),
-          source: site.name
-        });
-      }
-
-      // 通常HTML経由で取れた場合の保険。DOMでは日付がないため、ここでも候補だけ作って詳細補完へ回す。
-      const doc = new DOMParser().parseFromString(text, "text/html");
-      doc.querySelectorAll("a[href*='/news/']").forEach((anchor) => {
-        const url = absoluteUrl(anchor.getAttribute("href"), site.baseUrl);
-        const title = cleanTitle(anchor.textContent || anchor.getAttribute("aria-label") || anchor.getAttribute("title"));
-        if (!isLikelyHeadline(title) || !isPaulickReportArticleUrl(url, site)) return;
-
-        candidates.push({
-          title: title.replace(/^View post:\s*/i, ""),
-          url,
-          thumbnail: pickUsableImage(findImageNear(anchor, site)),
-          source: site.name
-        });
-      });
-
-      return dedupeRawItems(candidates);
-    }
-
     // Paulick Reportのカテゴリ・View All・固定ページを除き、/news/配下の個別記事だけを許可する。
     function isPaulickReportArticleUrl(value, site) {
       const url = absoluteUrl(value, site.baseUrl);
@@ -445,76 +381,6 @@
       } catch (_error) {
         return false;
       }
-    }
-
-    // Paulick Reportの候補1件について、Jina Readerの個別記事出力から公開日時と実画像を補完する。
-    async function hydratePaulickReportCandidate(candidate, site) {
-      try {
-        const detailText = await fetchText(candidate.url, {
-          ...site,
-          allowTextProxy: true,
-          preferTextProxy: true,
-          textProxyOnly: true,
-          requestTimeoutMs: site.detailRequestTimeoutMs || site.requestTimeoutMs || CONFIG.REQUEST_TIMEOUT_MS
-        });
-        const detail = extractPaulickReportDetail(detailText, candidate, site);
-        const publishedAt = detail.publishedAt || candidate.publishedAt;
-
-        if (!publishedAt) return null;
-
-        return {
-          title: detail.title || candidate.title,
-          url: candidate.url,
-          publishedAt,
-          thumbnail: pickUsableImage(candidate.thumbnail, detail.thumbnail),
-          source: site.name
-        };
-      } catch (_error) {
-        // 1記事だけ詳細補完に失敗しても、媒体全体を失敗扱いにしない。
-        // 取得できた他の記事でPaulick Report欄を更新できるよう、失敗候補はnullで落とす。
-        return null;
-      }
-    }
-
-    // Jina Readerの個別記事Markdownから、Published Time・本文見出し・代表画像を抜き出す。
-    function extractPaulickReportDetail(text, candidate, site) {
-      const raw = String(text || "");
-      const publishedAt =
-        parseDateFromText((raw.match(/^Published Time:\s*(.+)$/im) || [])[1]) ||
-        parseDateFromText((raw.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+20\d{2}\s+\d{1,2}:\d{2}\s+(?:AM|PM)\s+EDT\b/i) || [])[0]);
-      const title =
-        cleanTitle((raw.match(/^Title:\s*(.+)$/im) || [])[1]) ||
-        cleanTitle((raw.match(/^#\s+(.+?)(?:\s+-\s+Paulick Report)?$/m) || [])[1]) ||
-        candidate.title;
-
-      return {
-        title,
-        publishedAt,
-        thumbnail: pickUsableImage(...extractPaulickReportDetailImages(raw, candidate, site))
-      };
-    }
-
-    // 個別記事Markdown内の画像から、候補タイトルに近い画像や本文代表画像を優先して返す。
-    function extractPaulickReportDetailImages(text, candidate, site) {
-      const images = [];
-      const imagePattern = /!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
-
-      for (const match of text.matchAll(imagePattern)) {
-        const alt = cleanWhitespace(match[1]);
-        const url = match[2];
-        if (!isUsableImageValue(url)) continue;
-
-        // 見出しaltが候補タイトルに近い一覧画像、またはprofile=w2560等の本文代表画像を優先する。
-        if (alt && cleanTitle(alt).toLowerCase() === cleanTitle(candidate.title).toLowerCase()) {
-          images.unshift(url);
-        } else if (/profile=w(?:1536|2560)|ar=4-3|share16-9/i.test(url)) {
-          images.push(url);
-        }
-      }
-
-      // 一覧側で取れた画像を最後の保険として加える。詳細側が広告画像だけだった場合もダミー化を避けやすい。
-      images.push(candidate.thumbnail);
-      return images.map((image) => absoluteUrl(image, site.baseUrl));
     }
 
     // 取得したレスポンスをJSON/XML/HTMLとして解釈し、サイト設定に応じた抽出結果へ正規化する。
@@ -895,14 +761,16 @@
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
       // 専用抽出で漏れた記事はPARSERS.generic側のJSON-LD/Feed/Markdown/カード抽出が引き続き拾う。
       if (site.id === "irishracing") return [...extractIrishRacingItems(doc, site), ...extractIrishRacingMarkdownItems(rawText, site)];
-      if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site);
+      if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site, data);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
       // Thoroughbred Racingの3画面は同じ公式RSSを共有するため、JSON変換APIでもRSSでもcategory完全一致で分離する。
       // APIに当該カテゴリが0件なら空配列を正常結果として返し、別カテゴリの記事を混ぜない。
       if (["trc_racing", "trc_breeding_sales", "trc_sales_previews"].includes(site.id)) {
         return extractThoroughbredRacingRssJsonItems(data, site);
       }
-      if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
+      // 本体がDataDomeで自動取得を拒否するPaulick Reportは、Bing News RSSの索引から元記事URLを復元する。
+      if (site.id === "paulickreport") return extractPaulickReportBingItems(data, site);
+      if (site.id === "ttrausnz") return extractTtrAusNzMarkdownItems(rawText, site);
       // TDN、ANZ Bloodstock、The Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
       // TDNはRSSを予備経路として残しており、RSSレスポンス時はdataがnullになるため空配列を返す。
       // その場合もPARSERS.generic側のextractFeedItemsが続けてRSSを抽出する。
@@ -932,17 +800,57 @@
           return !site.rssCategory || categories.includes(site.rssCategory);
         })
         .map((item) => {
-          const rawDate = cleanWhitespace(item && item.pubDate);
-          const utcDate = rawDate.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
           return {
             title: item && item.title,
             url: String(item && item.link || "").replace(/^http:\/\/(www\.)?thoroughbredracing\.com/i, "https://www.thoroughbredracing.com"),
-            publishedAt: parseDate(utcDate ? `${utcDate[1]}T${utcDate[2]}Z` : rawDate),
+            publishedAt: parseRss2JsonUtcDate(item && item.pubDate),
             thumbnail: pickFirst(item && item.thumbnail, item && item.enclosure && item.enclosure.link),
             source: site.name
           };
         })
         .filter((item) => item.title && item.url && item.publishedAt && isCandidateArticleUrl(item.url, site));
+    }
+
+    // Bing Newsのサイト限定RSS JSONから、Paulick Reportの元記事だけを取り出す。
+    // BingクリックURLは表示リンクに使わず、urlクエリに格納された公式URLへ戻してから厳格に検証する。
+    function extractPaulickReportBingItems(data, site) {
+      if (!data) return [];
+      if (data.status !== "ok" || !Array.isArray(data.items)) {
+        throw new Error("Paulick Report RSS索引の応答を解析できませんでした");
+      }
+
+      return data.items
+        .map((item) => {
+          const url = unwrapBingNewsArticleUrl(item && item.link);
+          return {
+            title: item && item.title,
+            url,
+            publishedAt: parseRss2JsonUtcDate(item && item.pubDate),
+            // rss2jsonがNews:Imageを保持しない記事は、既存のダミー画像表示へ安全に委ねる。
+            thumbnail: pickFirst(item && item.thumbnail, item && item.enclosure && item.enclosure.link),
+            source: site.name
+          };
+        })
+        .filter((item) => item.title && item.publishedAt && isPaulickReportArticleUrl(item.url, site))
+        .sort((left, right) => right.publishedAt - left.publishedAt);
+    }
+
+    // Bing Newsのapiclick URLに埋め込まれた配信元URLをデコードする。
+    function unwrapBingNewsArticleUrl(value) {
+      try {
+        const url = new URL(String(value || ""));
+        if (!/(^|\.)bing\.com$/i.test(url.hostname)) return "";
+        return url.searchParams.get("url") || "";
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    // rss2jsonのタイムゾーンなし日時はUTCとして扱う。媒体ごとの重複実装を避ける共通変換器。
+    function parseRss2JsonUtcDate(value) {
+      const raw = cleanWhitespace(value);
+      const utcDate = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
+      return parseDate(utcDate ? `${utcDate[1]}T${utcDate[2]}Z` : raw);
     }
 
     // Racing PostのNext.js初期データから、記事カードと実写真URLを復元する。
@@ -1365,12 +1273,19 @@
         .replace(/(\d{1,2})\.(\d{2})(?!\d)/g, "$1:$2");
     }
 
-    // Sporting LifeのNext.js初期JSONから競馬記事だけを抽出する。
-    function extractSportingLifeItems(doc, site) {
+    // Sporting Life公式API、または旧Next.js初期JSONから競馬記事だけを抽出する。
+    // APIレスポンスは記事配列そのもの、HTML経路は#__NEXT_DATA__配下なので、ここで入力形式を吸収する。
+    function extractSportingLifeItems(doc, site, apiData) {
       const script = doc.querySelector("#__NEXT_DATA__");
-      const data = script ? safeJsonParse(script.textContent) : null;
+      const data = Array.isArray(apiData)
+        ? apiData
+        : script
+          ? safeJsonParse(script.textContent)
+          : null;
       if (!data) return [];
 
+      // 配列APIでもNext.jsの深いJSONでも同じ条件で記事オブジェクトを取り出す。
+      // API配列の要素もflattenJsonObjectsへ渡すことで、抽出後の正規化処理を一系統に保つ。
       return flattenJsonObjects(data, 12000)
         .filter((node) => node && node.article_id && node.title && node.published_date)
         .filter((node) => !node.category || node.category === "HORSE_RACING")
@@ -1380,7 +1295,9 @@
           publishedAt: parseDate(node.published_date),
           thumbnail: pickSportingLifeImage(node)
         }))
-        .filter(Boolean);
+        .filter(Boolean)
+        // APIの配列順は公開時刻順とは限らないため、単体抽出の段階でも新着順へ揃える。
+        .sort((left, right) => right.publishedAt - left.publishedAt);
     }
 
     // Sporting Lifeの記事IDとSEOタイトルから、元記事URLを組み立てる。
@@ -1459,42 +1376,47 @@
       return items;
     }
 
-    // TTR AusNZのNext.js初期JSONから、エディション内の記事一覧を抽出する。
-    function extractTtrAusNzItems(doc, site) {
-      const script = doc.querySelector("#__NEXT_DATA__");
-      const data = script ? safeJsonParse(script.textContent) : null;
-      if (!data) return [];
+    // TTR AusNZのReader Markdownから、日付付きエディション記事を抽出する。
+    // Readerは複数の#####見出しを改行なしで連結することがあるため、行単位ではなく全文をglobal検索する。
+    function extractTtrAusNzMarkdownItems(text, site) {
+      if (!text) return [];
 
-      const skipTypes = new Set(["interstitial", "sponsored", "social", "results", "winners", "top20"]);
-      const editionNodes = flattenJsonObjects(data, 20000)
-        .filter((node) => node && Array.isArray(node.pages) && (node.date || node.slug || node.publishedAt));
       const items = [];
+      const articlePattern = /#{4,5}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?ttrausnz\.com\.au\/edition\/(\d{4}-\d{2}-\d{2})\/([^/?#)]+)[^)]*)\)/gi;
 
-      editionNodes.forEach((edition) => {
-        const editionSlug = edition.slug || edition.date || "";
-        const editionDate =
-          parseDate(edition.publishedAt) ||
-          parseDate(edition.date) ||
-          parseDateFromUrl(`/edition/${editionSlug}/`);
+      for (const match of String(text).matchAll(articlePattern)) {
+        const url = match[2];
+        const slug = match[4];
+        if (isTtrAusNzFixedPage(slug)) continue;
 
-        edition.pages.forEach((page) => {
-          if (!page || !page.headline || !page.slug || skipTypes.has(page.articleType)) return;
-          if (isTtrAusNzFixedPage(page.slug)) return;
-          const pageEditionSlug = page.editionSlug || editionSlug;
-          if (!pageEditionSlug) return;
+        // 見出しラベルには「タイトル＋要約＋日付」が連結されている。
+        // URL slugと一致する先頭部分を探し、要約や日付がヘッドラインへ混ざらないようにする。
+        const title = extractTitleMatchingSlug(match[1], slug);
+        if (!isLikelyHeadline(title)) continue;
 
-          items.push({
-            title: page.headline,
-            url: `/edition/${pageEditionSlug}/${page.slug}`,
-            publishedAt: parseDate(page.publishedAt) || editionDate,
-            thumbnail: page.coverImage || edition.coverImage,
-            source: site.name
-          });
+        items.push({
+          title,
+          url,
+          publishedAt: parseDateFromUrl(url) || parseDate(match[3]),
+          // 現在のReader一覧には記事写真が含まれないため、空値は本体のダミー画像へ委ねる。
+          thumbnail: "",
+          source: site.name
         });
-      });
+      }
 
-      // JSON深度走査の順序はNext.js内部構造で変わるため、返却前に公開時刻の降順を明示する。
       return items.sort((left, right) => right.publishedAt - left.publishedAt);
+    }
+
+    // 「タイトル＋要約」からURL slugと完全一致するタイトル部分だけを復元する。
+    function extractTitleMatchingSlug(label, slug) {
+      const words = cleanWhitespace(label).split(" ").filter(Boolean);
+
+      for (let index = 1; index <= words.length; index += 1) {
+        const candidate = words.slice(0, index).join(" ");
+        if (slugifyPathSegment(candidate) === slugifyPathSegment(slug)) return candidate;
+      }
+
+      return "";
     }
 
     // エディション内へ毎日挿入される案内・索引ページを、記事種別に依存せずslugで除外する。
@@ -2391,6 +2313,14 @@
       if (/\/news\/(latest-news|racing|tipping|jockeys|interstate|international|industry|tv-shows|spring-racing|blackbook|null)$/i.test(lowerPath)) return false;
       if ((site.id === "racingpost_news" || site.id === "racingpost_bloodstock") && !/-a[a-z0-9]+\/?$/i.test(lowerPath)) {
         // Racing Postのカテゴリ導線も/news/配下に大量にあるため、記事ID付きURLだけを記事として扱う。
+        return false;
+      }
+      if (site.id === "ttrausnz" && !/^\/edition\/20\d{2}-\d{2}-\d{2}\/[^/]+$/i.test(lowerPath)) {
+        // Readerには案内リンクも多いため、日付エディション配下の個別記事URL以外を許可しない。
+        return false;
+      }
+      if (site.id === "loveracing_nz" && !/^\/news\/\d+\/[^/]+\.aspx$/i.test(lowerPath)) {
+        // /News/ArticlesやRaceInfo等のナビゲーションを除き、数値記事ID付きの個別記事だけを許可する。
         return false;
       }
 

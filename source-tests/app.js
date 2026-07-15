@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js";
-import { SOURCES } from "./sources.js";
+import { runSourceTest } from "./core.js?v=20260715-source-reliability";
+import { SOURCES } from "./sources.js?v=20260715-source-reliability";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),

@@ -1,4 +1,4 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseRss2Json, parseTospoReaderCards, parseTtrAusNzNextData, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260715-source-reliability";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -10,6 +10,55 @@ const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url="
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "loveracing_reader",
+    name: "LOVERACING.NZ Reader Listing",
+    url: "https://loveracing.nz/news/articles/racing",
+    baseUrl: "https://loveracing.nz",
+    parse: parseLoveracingReader,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    textProxyOnly: true,
+    requiredRoute: "text-proxy",
+    timeoutMs: 20000,
+    maxItems: 18,
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1,
+    forbiddenUrlPatterns: [/\/News\/Articles\//i, /\/RaceInfo\//i]
+  },
+  {
+    id: "paulickreport_bing_rss",
+    name: "Paulick Report / Bing News RSS Index",
+    url: "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent("https://www.bing.com/news/search?q=site%3Apaulickreport.com&format=rss"),
+    baseUrl: "https://paulickreport.com",
+    parse: parsePaulickBingRssJson,
+    maxItems: 18,
+    tryDirect: true,
+    requiredRoute: "direct",
+    pathPrefixes: ["/news/"],
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    // 現在のrss2json応答はNews:Imageを保持しないため、画像なしは既存ダミー表示の正常系とする。
+    minimumImageCoverage: 0
+  },
+  {
+    id: "sportinglife_official_api",
+    name: "Sporting Life Official Racing API",
+    url: "https://www.sportinglife.com/api/content/articles/summary?limit=13&offset=0&basketPath=sl%2Fracing",
+    baseUrl: "https://www.sportinglife.com",
+    parse: parseSportingLifeApi,
+    maxItems: 18,
+    tryDirect: true,
+    requiredRoute: "direct",
+    pathPrefixes: ["/racing/news/"],
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
   {
     id: "trc_sales_previews_full_rss",
     name: "Thoroughbred Racing / Sales Previews Full RSS",
@@ -25,13 +74,17 @@ export const SOURCES = [
     minimumImageCoverage: 0
   },
   {
-    id: "ttrausnz_next_data",
-    name: "TTR AusNZ Next.js Data",
+    id: "ttrausnz_reader",
+    name: "TTR AusNZ Reader Listing",
     url: "https://www.ttrausnz.com.au/",
     baseUrl: "https://www.ttrausnz.com.au",
-    parse: parseTtrAusNzNextData,
-    // 公式ページはCORSを許可しないため、HTML構造を維持する公開プロキシ経路を検証する。
-    allowTextProxy: false,
+    parse: parseTtrAusNzReader,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    textProxyOnly: true,
+    requiredRoute: "text-proxy",
+    timeoutMs: 20000,
+    maxItems: 18,
     forbiddenUrlPatterns: [
       /\/(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)\/?$/i,
       /\/looking-ahead(?:-|\/|$)/i
@@ -39,7 +92,8 @@ export const SOURCES = [
     requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
-    minimumImageCoverage: 1
+    // Reader一覧に写真がない記事は、本体のダミー画像へ渡せることを正常条件にする。
+    minimumImageCoverage: 0
   },
   {
     id: "sanspo_keiba_sitemap_reader",

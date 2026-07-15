@@ -98,9 +98,12 @@ async function fetchAndParseSource(source) {
   if (source.allowTextProxy && source.preferTextProxy) {
     candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
-  PROXY_BUILDERS.forEach((buildUrl, index) => {
-    candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
-  });
+  if (!source.textProxyOnly) {
+    // Reader専用媒体では、既知の失敗経路を順番に待ってテスト結果が遅くならないよう公開CORSプロキシを除外する。
+    PROXY_BUILDERS.forEach((buildUrl, index) => {
+      candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
+    });
+  }
   if (source.allowTextProxy && !source.preferTextProxy) {
     // Sitemapの生XMLを公開CORSプロキシで取得できない場合だけ、ReaderからURL候補を得る。
     // ReaderではXMLのタイトル・日時・画像が失われるため、後段のhydrateItemsFromReaderで記事詳細を補う。
@@ -216,6 +219,50 @@ export function parseRss2Json(text, source) {
       publishedAt: normalizeRss2JsonDate(item && item.pubDate),
       thumbnail: firstValue(item && item.thumbnail, item && item.enclosure && item.enclosure.link)
     }));
+}
+
+// Bing Newsのサイト限定RSSを変換したJSONから、Paulick Reportの元記事URLを復元する。
+// 検索結果の転送リンクや/news/直下の固定導線は返さず、個別記事として判定できるURLだけを残す。
+export function parsePaulickBingRssJson(text) {
+  const data = JSON.parse(String(text || ""));
+  if (!data || data.status !== "ok" || !Array.isArray(data.items)) {
+    throw new Error("Paulick Report RSS索引を解析できませんでした");
+  }
+
+  return data.items
+    .map((item) => ({
+      title: item && item.title,
+      url: unwrapBingNewsUrl(item && item.link),
+      publishedAt: normalizeRss2JsonDate(item && item.pubDate),
+      // rss2jsonが元RSSのNews:Imageを省略した場合は空文字を返し、本体のダミー画像を検証対象にする。
+      thumbnail: firstValue(item && item.thumbnail, item && item.enclosure && item.enclosure.link)
+    }))
+    .filter((item) => isPaulickReportNewsArticle(item.url))
+    .sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// Bingの転送URLから公式記事URLだけを取り出す。外部ホストや不正URLは空文字として破棄する。
+function unwrapBingNewsUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!/(^|\.)bing\.com$/i.test(url.hostname)) return "";
+    const originalUrl = url.searchParams.get("url") || "";
+    const original = new URL(originalUrl);
+    return /(^|\.)paulickreport\.com$/i.test(original.hostname) ? original.href : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+// `/news/<category>/<slug>`以上の深さを持つPaulick Report記事だけを許可する。
+function isPaulickReportNewsArticle(value) {
+  try {
+    const url = new URL(String(value || ""));
+    const parts = url.pathname.split("/").filter(Boolean);
+    return /(^|\.)paulickreport\.com$/i.test(url.hostname) && parts[0] === "news" && parts.length >= 3;
+  } catch (_error) {
+    return false;
+  }
 }
 
 // `YYYY-MM-DD HH:mm:ss`をUTCのISO互換文字列へ直し、すでにタイムゾーン付きなら元値を維持する。
@@ -674,40 +721,97 @@ export function parseRacingComGraphql(text) {
   }));
 }
 
-// TTR AusNZのNext.js初期データから、エディション内の実ニュースだけを抽出する。
-// 広告型に加えてnormal型の固定ページslugも除外し、記事写真は各pageのcoverImageを優先する。
-export function parseTtrAusNzNextData(text) {
-  const doc = new DOMParser().parseFromString(String(text || ""), "text/html");
-  const script = doc.querySelector("#__NEXT_DATA__");
-  const data = script ? JSON.parse(script.textContent) : null;
-  if (!data) throw new Error("TTR AusNZのNext.jsデータを解析できませんでした");
+// Sporting Life公式サイトが利用する公開JSON APIを、ポータル共通の記事形式へ変換する。
+// URLはAPI内の記事IDとSEOタイトルから公式サイトと同じ規則で組み立て、一覧APIの画像を引き継ぐ。
+export function parseSportingLifeApi(text) {
+  const data = parseJsonPayload(text);
+  if (!Array.isArray(data)) {
+    throw new Error("Sporting Life APIの記事配列を解析できませんでした");
+  }
 
-  const skipTypes = new Set(["interstitial", "sponsored", "social", "results", "winners", "top20"]);
-  const editionNodes = flattenObjectsForSourceTest(data, 20000)
-    .filter((node) => node && Array.isArray(node.pages) && (node.date || node.slug || node.publishedAt));
-  const items = [];
+  return data
+    .filter((article) => article && article.article_id && article.title && article.published_date)
+    .filter((article) => !article.category || article.category === "HORSE_RACING")
+    .map((article) => {
+      const slug = slugifySourceTestPath(article.seo_title || article.title);
+      const widgets = Array.isArray(article.widgets) ? article.widgets : [];
+      const imageCandidates = [];
 
-  editionNodes.forEach((edition) => {
-    const editionSlug = edition.slug || edition.date || "";
-    // 日付だけのedition.dateよりepochのpublishedAtを優先し、同日版の実公開時刻を保持する。
-    const editionDate = firstValue(edition.publishedAt, edition.date);
-
-    edition.pages.forEach((page) => {
-      if (!page || !page.headline || !page.slug || skipTypes.has(page.articleType)) return;
-      if (isTtrAusNzFixedPage(page.slug)) return;
-      const pageEditionSlug = page.editionSlug || editionSlug;
-      if (!pageEditionSlug) return;
-
-      items.push({
-        title: page.headline,
-        url: `/edition/${pageEditionSlug}/${page.slug}`,
-        publishedAt: firstValue(page.publishedAt, editionDate),
-        thumbnail: firstValue(page.coverImage, edition.coverImage)
+      // 代表画像はwidget.keys内のuri/thumbnailとして配信される。
+      // キー順を維持して候補へ積み、最初の有効値をカード画像として採用する。
+      widgets.forEach((widget) => {
+        const keys = Array.isArray(widget && widget.keys) ? widget.keys : [];
+        keys.forEach((entry) => {
+          if (entry && ["uri", "thumbnail"].includes(entry.key)) imageCandidates.push(entry.value);
+        });
       });
+
+      return {
+        title: article.title,
+        url: slug ? `/racing/news/${slug}/${article.article_id}` : "",
+        publishedAt: article.published_date,
+        thumbnail: firstValue(...imageCandidates.filter(isUsableSourceImageValue))
+      };
+    })
+    // APIの返却順に依存せず、専用テストでも本体と同じ新着順を検証できるようにする。
+    .sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// TTR AusNZのReader Markdownから、エディション日付を持つ個別記事だけを抽出する。
+// 見出しが改行なしで連結される実データに合わせ、全文のリンク構造をglobal検索する。
+export function parseTtrAusNzReader(text) {
+  const items = [];
+  const articlePattern = /#{4,5}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?ttrausnz\.com\.au\/edition\/(\d{4}-\d{2}-\d{2})\/([^/?#)]+)[^)]*)\)/gi;
+
+  for (const match of String(text || "").matchAll(articlePattern)) {
+    const url = match[2];
+    const slug = match[4];
+    if (isTtrAusNzFixedPage(slug)) continue;
+
+    const title = extractTtrTitleMatchingSlug(match[1], slug);
+    if (!title) {
+      // URLから題名を生成すると抽出失敗を隠すため、実見出しを復元できないカードはテスト失敗にする。
+      throw new Error(`TTR AusNZの見出しをURLと照合できませんでした: ${url}`);
+    }
+    items.push({
+      title,
+      url,
+      // 本体のparseDateFromUrlと同じく、タイムゾーン指定なしのローカル日付午前0時として扱う。
+      publishedAt: `${match[3]}T00:00:00`,
+      // Reader一覧に画像がない場合は空値のまま返し、本体のダミー表示を正常系として確認する。
+      thumbnail: ""
     });
-  });
+  }
 
   return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// LOVERACING.NZのReader出力から、画像・見出し・日付・個別記事URLが一体になったカードだけを抽出する。
+// ナビゲーションにも多数の/news/リンクがあるため、`/News/<数値ID>/<slug>.aspx`へ厳格に限定する。
+export function parseLoveracingReader(text) {
+  const items = [];
+  const cardPattern = /\[!\[[^\]]*\]\((https?:\/\/loveracing\.nz\/Common\/Image\.ashx\?[^\r\n]+?)\)\s*#{4,5}\s*([^\]]+?)\s+(\d{1,2}\s+[A-Za-z]+,\s*\d{4})\]\((https?:\/\/loveracing\.nz\/News\/\d+\/[^)\s]+\.aspx)\)/gi;
+
+  for (const match of String(text || "").matchAll(cardPattern)) {
+    items.push({
+      title: match[2],
+      url: match[4],
+      publishedAt: match[3],
+      thumbnail: match[1]
+    });
+  }
+
+  return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// Readerラベル先頭から、URL slugと一致するタイトル部分だけを切り出す。
+function extractTtrTitleMatchingSlug(label, slug) {
+  const words = cleanText(label).split(" ").filter(Boolean);
+  for (let index = 1; index <= words.length; index += 1) {
+    const candidate = words.slice(0, index).join(" ");
+    if (slugifySourceTestPath(candidate) === slugifySourceTestPath(slug)) return candidate;
+  }
+  return "";
 }
 
 // TTRのニュース一覧に常設される案内・索引ページをslugで除外する。
@@ -716,21 +820,21 @@ function isTtrAusNzFixedPage(slug) {
     /^looking-ahead(?:-|$)/i.test(String(slug || ""));
 }
 
-// Next.js JSONを循環なしで深さ優先走査し、記事配列を持つエディション候補を探す。
-function flattenObjectsForSourceTest(value, limit) {
-  const result = [];
-  const stack = [value];
+// APIが返す英文タイトルをSporting Lifeの記事パス形式へ正規化する。
+function slugifySourceTestPath(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
-  while (stack.length > 0 && result.length < limit) {
-    const current = stack.pop();
-    if (!current || typeof current !== "object") continue;
-    result.push(current);
-    Object.values(current).forEach((child) => {
-      if (child && typeof child === "object") stack.push(child);
-    });
-  }
-
-  return result;
+// テスト側でも本体と同様に、ロゴ・SVG・プレースホルダーを記事写真として合格させない。
+function isUsableSourceImageValue(value) {
+  const url = String(value || "").trim();
+  return /^https?:\/\//i.test(url) &&
+    !/blank\.gif|spacer\.gif|transparent|no[-_]?image|dummy|placeholder|default[-_]?image|avatar|\/icons?\/|\/svgs?\/|\.svg(?:[?#&]|$)|logo|favicon|sprite|pixel|tracking|advert|sponsor|initials?|monogram/i.test(url);
 }
 
 // Readerのヘッダーより後ろにあるJSONオブジェクトを取り出し、通常JSONと同じパーサーへ渡す。
