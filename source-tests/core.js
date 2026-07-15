@@ -44,6 +44,12 @@ export async function runSourceTest(source) {
   const minimumImageCoverage = source.minimumImageCoverage ?? 0.75;
   const imageCoverage = itemCount ? loadedImages / itemCount : 0;
   const routeMatched = !source.requiredRoute || response.route === source.requiredRoute;
+  const forbiddenUrlMatches = checkedItems.filter((item) => matchesForbiddenUrl(item.url, source.forbiddenUrlPatterns)).length;
+  // 同一公開時刻の記事は許容し、後続記事が前の記事より新しくなる逆転だけを不正とする。
+  const chronologicalOrderValid = checkedItems.every((item, index) =>
+    index === 0 || !item.publishedAt || !checkedItems[index - 1].publishedAt ||
+      item.publishedAt.getTime() <= checkedItems[index - 1].publishedAt.getTime()
+  );
 
   return {
     sourceId: source.id,
@@ -56,16 +62,30 @@ export async function runSourceTest(source) {
     missingThumbnails,
     loadedImages,
     imageCoverage,
+    forbiddenUrlMatches,
+    chronologicalOrderValid,
     passed:
       itemCount >= minimumItems &&
       validTitleLinks === itemCount &&
       (!source.requireDate || datedItems === itemCount) &&
       routeMatched &&
+      forbiddenUrlMatches === 0 &&
+      (!source.requireDescendingDates || chronologicalOrderValid) &&
       imageCoverage >= minimumImageCoverage &&
       // URLが配信された画像は全件読めることを要求し、画像URL自体がない記事とは別に判定する。
       loadedImages === thumbnailItems,
     items: checkedItems
   };
+}
+
+// 媒体設定で禁止した固定ページ・案内ページのURLが取得結果へ混ざっていないか確認する。
+function matchesForbiddenUrl(url, patterns) {
+  if (!Array.isArray(patterns)) return false;
+  return patterns.some((pattern) => {
+    if (!(pattern instanceof RegExp)) return String(url || "").includes(String(pattern));
+    pattern.lastIndex = 0;
+    return pattern.test(String(url || ""));
+  });
 }
 
 // CORS対応媒体は直接取得を先に試し、通信またはパース失敗時だけ本体と同じ公開プロキシへ進む。
