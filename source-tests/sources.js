@@ -19,7 +19,7 @@ export const SOURCES = [
     // 公式ページはCORSを許可しないため、HTML構造を維持する公開プロキシ経路を検証する。
     allowTextProxy: false,
     forbiddenUrlPatterns: [
-      /\/(?:job-board|wednesday-trivia|2026-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)\/?$/i,
+      /\/(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)\/?$/i,
       /\/looking-ahead(?:-|\/|$)/i
     ],
     requireDescendingDates: true,

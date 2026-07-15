@@ -1502,7 +1502,7 @@ const state = {
     // normal型には実ニュースも存在し得るため、normal全体を落とさず既知の固定ページだけを限定除外する。
     function isTtrAusNzFixedPage(slug) {
       const value = String(slug || "");
-      return /^(?:job-board|wednesday-trivia|2026-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(value) ||
+      return /^(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(value) ||
         /^looking-ahead(?:-|$)/i.test(value);
     }
 
