@@ -897,7 +897,7 @@ const state = {
       if (["tdn_europe", "tdn_america", "anzbloodstock", "thestraight"].includes(site.id)) {
         return extractWordPressApiItems(data, site);
       }
-      if (site.id === "bloodhorse") return extractBloodHorseItems(doc, site);
+      if (site.id === "bloodhorse") return [...extractBloodHorseItems(doc, site), ...extractBloodHorseReaderItems(rawText, site)];
       if (site.id === "racing_com") return [...extractRacingComGraphqlItems(data, site), ...extractRacingComMarkdownItems(rawText, site)];
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
       return [];
@@ -1102,6 +1102,100 @@ const state = {
       });
 
       return items.filter((item) => item.title && item.url && item.publishedAt);
+    }
+
+    // BloodHorseは公式HTMLがWAFで遮断されることがあるため、一覧Readerのカードを安定取得経路として読む。
+    // 写真リンクと見出しリンクのURL一致を要求し、相対時刻は配信元のAmerica/New_Yorkとして絶対時刻へ直す。
+    function extractBloodHorseReaderItems(rawText, site) {
+      const lines = String(rawText || "").split(/\r?\n/).map((line) => line.trim());
+      const items = [];
+      let pendingImage = null;
+
+      lines.forEach((line, index) => {
+        const imageLink = line.match(/^\*?\s*\[!\[[^\]]*\]\((https?:\/\/cdn-images\.bloodhorse\.com\/[^)]+)\)\]\((https?:\/\/(?:www\.)?bloodhorse\.com\/horse-racing\/articles\/\d+\/[^\s)\"]+)/i);
+        if (imageLink) {
+          pendingImage = { thumbnail: imageLink[1], url: imageLink[2] };
+          return;
+        }
+
+        const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?bloodhorse\.com\/horse-racing\/articles\/\d+\/[^)]+)\)$/i);
+        if (!heading) return;
+
+        const nearbyDate = lines
+          .slice(index + 1, index + 9)
+          .map((value) => value.replace(/^\*?\s*/, ""))
+          .find((value) => /^(Today|Yesterday),\s*\d{1,2}:\d{2}\s*(?:AM|PM)$/i.test(value));
+        const publishedAt = parseRelativeDateInTimeZone(nearbyDate, "America/New_York");
+        const thumbnail = pendingImage && canonicalArticleUrl(pendingImage.url) === canonicalArticleUrl(heading[2])
+          ? pendingImage.thumbnail
+          : "";
+        pendingImage = null;
+
+        if (!publishedAt) return;
+        items.push({
+          title: cleanTitle(heading[1]),
+          url: heading[2],
+          publishedAt,
+          thumbnail: pickUsableImage(thumbnail),
+          source: site.name
+        });
+      });
+
+      return items;
+    }
+
+    // Today/Yesterday表記を配信元タイムゾーンの壁時計として解釈し、ブラウザ共通のDateへ変換する。
+    function parseRelativeDateInTimeZone(value, timeZone) {
+      const match = String(value || "").match(/^(Today|Yesterday),\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (!match) return null;
+
+      const nowParts = timeZoneParts(new Date(), timeZone);
+      const calendarDate = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day));
+      if (/^yesterday$/i.test(match[1])) calendarDate.setUTCDate(calendarDate.getUTCDate() - 1);
+
+      let hour = Number(match[2]);
+      if (/pm/i.test(match[4]) && hour < 12) hour += 12;
+      if (/am/i.test(match[4]) && hour === 12) hour = 0;
+
+      return zonedDateToUtc({
+        year: calendarDate.getUTCFullYear(),
+        month: calendarDate.getUTCMonth() + 1,
+        day: calendarDate.getUTCDate(),
+        hour,
+        minute: Number(match[3])
+      }, timeZone);
+    }
+
+    // Dateを指定タイムゾーンの年月日時分へ分解する。
+    function timeZoneParts(date, timeZone) {
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+      });
+      return Object.fromEntries(
+        formatter.formatToParts(date)
+          .filter((part) => part.type !== "literal")
+          .map((part) => [part.type, Number(part.value)])
+      );
+    }
+
+    // 地域時刻を一度UTCと仮定し、その瞬間のタイムゾーン差を差し引いて絶対時刻へ変換する。
+    function zonedDateToUtc(parts, timeZone) {
+      const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute));
+      const represented = timeZoneParts(utcGuess, timeZone);
+      const representedAsUtc = Date.UTC(
+        represented.year,
+        represented.month - 1,
+        represented.day,
+        represented.hour,
+        represented.minute
+      );
+      return new Date(utcGuess.getTime() - (representedAsUtc - utcGuess.getTime()));
     }
 
     // Irish Racingの一覧HTMLから日付見出しと時刻を組み合わせて記事を抽出する。

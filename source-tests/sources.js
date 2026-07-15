@@ -1,4 +1,4 @@
-import { parseAtom, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseRss2Json, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseRss2Json, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -10,6 +10,19 @@ const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url="
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "bloodhorse_reader",
+    name: "BloodHorse Reader Listing",
+    url: "https://www.bloodhorse.com/horse-racing/articles/index",
+    baseUrl: "https://www.bloodhorse.com",
+    parse: parseBloodHorseReaderCards,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    requiredRoute: "text-proxy",
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
   {
     id: "trc_racing_rss_api",
     name: "Thoroughbred Racing / Racing RSS API",
