@@ -9,6 +9,22 @@ const racingComSite = internationalConfig && internationalConfig.SITES.find((sit
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
   {
+    id: "attheraces_news_sitemap",
+    name: "At The Races News Sitemap",
+    url: "https://www.attheraces.com/news-sitemap.xml",
+    baseUrl: "https://www.attheraces.com",
+    allowedOrigins: ["https://www.attheraces.com"],
+    pathPrefixes: ["/news/"],
+    parse: parseNewsSitemap,
+    tryDirect: true,
+    requiredRoute: "direct",
+    readerDecorationUrls: ["https://www.attheraces.com/news"],
+    hydrationTimeoutMs: 20000,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
+  {
     id: "tospo_news_sitemap",
     name: "東スポ競馬 News Sitemap",
     url: "https://tospo-keiba.jp/sitemap_news_1.xml",
