@@ -1,13 +1,56 @@
-import { parseAtom, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseRss2Json, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
   window.InternationalHorseRacingPortalDefinition.CONFIG;
 const racingComSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racing_com");
+const thoroughbredRacingRss = "https://www.thoroughbredracing.com/rss.xml";
+const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(thoroughbredRacingRss);
 
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "trc_racing_rss_api",
+    name: "Thoroughbred Racing / Racing RSS API",
+    url: thoroughbredRacingRssApi,
+    baseUrl: "https://www.thoroughbredracing.com",
+    parse: parseRss2Json,
+    rssCategory: "Racing",
+    tryDirect: true,
+    requiredRoute: "direct",
+    requireDate: true,
+    minimumItems: 1,
+    // 公式RSSが写真を配信しないため、画像なしを正常データとして本体のダミー画像へ渡す。
+    minimumImageCoverage: 0
+  },
+  {
+    id: "trc_breeding_rss_api",
+    name: "Thoroughbred Racing / Breeding RSS API",
+    url: thoroughbredRacingRssApi,
+    baseUrl: "https://www.thoroughbredracing.com",
+    parse: parseRss2Json,
+    rssCategory: "Breeding",
+    tryDirect: true,
+    requiredRoute: "direct",
+    requireDate: true,
+    // RSS先頭10件に当該カテゴリの更新がない場合も、APIレスポンス自体を正常として検証する。
+    minimumItems: 0,
+    minimumImageCoverage: 0
+  },
+  {
+    id: "trc_sales_previews_rss_api",
+    name: "Thoroughbred Racing / Sales Previews RSS API",
+    url: thoroughbredRacingRssApi,
+    baseUrl: "https://www.thoroughbredracing.com",
+    parse: parseRss2Json,
+    rssCategory: "Sales Previews",
+    tryDirect: true,
+    requiredRoute: "direct",
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0
+  },
   {
     id: "drf_news_sitemap",
     name: "Daily Racing Form News Sitemap",

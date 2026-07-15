@@ -169,6 +169,36 @@ export function parseFeed(text, source) {
   }).filter(Boolean);
 }
 
+// rss2jsonのCORS対応JSONから、共有RSSの指定カテゴリだけを共通記事形式へ変換する。
+// 無料APIはRSS先頭の一部だけを返すため、カテゴリ判定はURL推測ではなく公式RSSのcategories完全一致で行う。
+export function parseRss2Json(text, source) {
+  const data = JSON.parse(String(text || ""));
+  if (!data || data.status !== "ok" || !Array.isArray(data.items)) {
+    throw new Error("RSS JSONを解析できませんでした");
+  }
+
+  return data.items
+    .filter((item) => {
+      const categories = Array.isArray(item && item.categories) ? item.categories.map(cleanText) : [];
+      return !source.rssCategory || categories.includes(source.rssCategory);
+    })
+    .map((item) => ({
+      title: item && item.title,
+      // 公式RSSは一部リンクをhttpで返すため、閲覧時のリダイレクトを避けてhttpsへ正規化する。
+      url: String(item && item.link || "").replace(/^http:\/\/(www\.)?thoroughbredracing\.com/i, "https://www.thoroughbredracing.com"),
+      // rss2jsonのpubDateはタイムゾーンなしUTC表記なので、末尾Zを補ってローカル時刻と誤解釈させない。
+      publishedAt: normalizeRss2JsonDate(item && item.pubDate),
+      thumbnail: firstValue(item && item.thumbnail, item && item.enclosure && item.enclosure.link)
+    }));
+}
+
+// `YYYY-MM-DD HH:mm:ss`をUTCのISO互換文字列へ直し、すでにタイムゾーン付きなら元値を維持する。
+function normalizeRss2JsonDate(value) {
+  const raw = cleanText(value);
+  const utc = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
+  return utc ? `${utc[1]}T${utc[2]}Z` : raw;
+}
+
 // Google News Sitemapから見出し・記事URL・公開日時・画像を抽出する。
 // XML名前空間の接頭辞は配信元によって変わり得るため、querySelectorの文字列ではなくlocalNameで読む。
 // 同じサイトマップに複数カテゴリが混在する場合は、媒体設定のpathHintsで記事URLを絞り込む。
