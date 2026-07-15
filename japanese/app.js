@@ -186,6 +186,12 @@ const state = {
     }
 
     async function fetchSite(site) {
+      // 東スポ競馬は通常一覧のHTML取得が公開CORSプロキシで不安定なため、専用の安定経路を使う。
+      // ニュースサイトマップを記事の正本とし、Reader一覧は見出し・日時・画像の補完に限定する。
+      if (site.id === "tospo" && site.sitemapUrl) {
+        return fetchTospoStructuredItems(site);
+      }
+
       const html = await fetchText(site.url, site.accept);
       // RSS/AtomはHTMLとして解釈するとlink要素の属性やXML名前空間を失うため、媒体設定の文書型で解析する。
       const doc = new DOMParser().parseFromString(html, site.documentType || "text/html");
@@ -205,6 +211,137 @@ const state = {
       // 一覧側で「...」「…」付きの短い見出ししか出ない媒体は、記事ページのog:title/h1を少数だけ確認する。
       // 追加アクセスを増やしすぎるとプロキシ制限を受けやすいため、媒体ごとにtitleHydrationLimitで上限を置く。
       return hydrateTruncatedTitles(dedupeByUrl(items), site);
+    }
+
+    // 東スポ競馬のサイトマップと一覧カードを統合し、記事だけを返す。
+    // サイトマップに存在しない固定ページやランキングリンクは、一覧に出ていても採用しない。
+    async function fetchTospoStructuredItems(site) {
+      const sitemapText = await fetchReaderText(site.sitemapUrl);
+      const sitemapItems = extractTospoSitemapItems(sitemapText, site);
+      if (sitemapItems.length === 0) {
+        throw new Error(t("noExtract"));
+      }
+
+      // 一覧の片方が一時的に失敗しても、取得できたページのカードだけで更新を継続する。
+      // ただし両方とも失敗した場合は、日時を持たないReaderサイトマップだけでは表示できないため失敗扱いにする。
+      const listingResults = await Promise.allSettled(
+        site.readerListingUrls.map(async (url) => extractTospoReaderCards(await fetchReaderText(url), site))
+      );
+      const listingItems = listingResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      if (listingItems.length === 0) {
+        throw new Error(t("noExtract"));
+      }
+
+      const listingByUrl = new Map();
+      listingItems.forEach((item) => {
+        const key = canonicalArticleUrl(item.url);
+        if (key && !listingByUrl.has(key)) listingByUrl.set(key, item);
+      });
+
+      const mergedItems = sitemapItems.map((sitemapItem) => {
+        const listingItem = listingByUrl.get(canonicalArticleUrl(sitemapItem.url)) || {};
+        return {
+          title: sitemapItem.title || listingItem.title,
+          url: sitemapItem.url,
+          publishedAt: sitemapItem.publishedAt || listingItem.publishedAt,
+          thumbnail: listingItem.thumbnail || sitemapItem.thumbnail,
+          source: site.name
+        };
+      });
+
+      const normalizedItems = mergedItems
+        .map((item) => normalizeItem(item, site))
+        .filter(Boolean)
+        .filter((item) => /\/breaking_news\/\d+\/?$/i.test(new URL(item.url).pathname));
+
+      if (normalizedItems.length === 0) {
+        throw new Error(t("noExtract"));
+      }
+
+      return dedupeByUrl(normalizedItems);
+    }
+
+    // Jina Readerを直接呼び出す。公開CORSプロキシを二重に通さないため、Reader URLへ通常のfetchを行う。
+    async function fetchReaderText(url) {
+      return fetchProxyText(CONFIG.TEXT_PROXY(url), CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
+    }
+
+    // Google News Sitemapの生XMLと、ReaderがMarkdown化したURL一覧の両方へ対応する。
+    // Reader経路では見出し・日時が失われるため空欄のまま返し、一覧カードとの完全URL一致で補完する。
+    function extractTospoSitemapItems(text, site) {
+      const doc = new DOMParser().parseFromString(text, "application/xml");
+      if (!doc.querySelector("parsererror")) {
+        return [...doc.getElementsByTagNameNS("*", "url")].map((entry) => ({
+          title: textByLocalName(entry, "title"),
+          url: textByLocalName(entry, "loc"),
+          publishedAt: parseDate(textByLocalName(entry, "publication_date")),
+          thumbnail: "",
+          source: site.name
+        })).filter((item) => isTospoBreakingNewsUrl(item.url));
+      }
+
+      const urls = [...String(text || "").matchAll(/\[[^\]]*\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)[^)]*\)/gi)]
+        .map((match) => match[1]);
+      return [...new Set(urls)].map((url) => ({
+        title: "",
+        url,
+        publishedAt: null,
+        thumbnail: "",
+        source: site.name
+      }));
+    }
+
+    // Reader一覧のカード行から、完全見出し・記事URL・記事画像と、そのカード直後にある日時を抽出する。
+    // origin+pathnameが同じ二つの記事リンクを持つ行だけをカードと認め、広告やランキング画像を除外する。
+    function extractTospoReaderCards(text, site) {
+      const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
+      const items = [];
+
+      lines.forEach((line, index) => {
+        const card = line.match(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)(?:!\[[^\]]*\]\([^)]+\))?\s*\[([^\]]+)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)/i);
+        if (!card || canonicalArticleUrl(card[2]) !== canonicalArticleUrl(card[4])) return;
+        if (!/\/images\/article\/thumbnail\//i.test(card[1])) return;
+
+        // Readerでは日時がカード行の後ろへ並ぶ。次の記事カードより前、かつ最大7行だけを探索することで、
+        // 隣の記事の日時を誤って流用することを防ぐ。
+        const nextCardOffset = lines
+          .slice(index + 1)
+          .findIndex((value) => /tospo-keiba\.jp\/breaking_news\/\d+/i.test(value));
+        const endIndex = nextCardOffset === -1 ? index + 8 : index + 1 + nextCardOffset;
+        const nearby = lines.slice(index + 1, Math.min(endIndex, index + 8));
+        const date = nearby.find((value) => /^20\d{2}\/\d{1,2}\/\d{1,2}$/.test(value));
+        const time = nearby.find((value) => /^\d{1,2}:\d{2}$/.test(value));
+        if (!date || !time) return;
+
+        items.push({
+          title: card[3],
+          url: card[4],
+          publishedAt: parseDate(`${date} ${time}`),
+          thumbnail: absoluteUrl(card[1], site.baseUrl),
+          source: site.name
+        });
+      });
+
+      return items;
+    }
+
+    function isTospoBreakingNewsUrl(value) {
+      try {
+        const parsed = new URL(value);
+        return parsed.origin === "https://tospo-keiba.jp" && /^\/breaking_news\/\d+\/?$/i.test(parsed.pathname);
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    // 記事照合では解析クエリ・hash・末尾スラッシュを除き、origin+pathnameだけを正本にする。
+    function canonicalArticleUrl(value) {
+      try {
+        const parsed = new URL(value);
+        return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+      } catch (_error) {
+        return "";
+      }
     }
 
     async function fetchText(url, accept) {

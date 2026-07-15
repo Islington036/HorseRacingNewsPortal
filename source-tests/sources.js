@@ -1,4 +1,4 @@
-import { parseAtom, parseFeed, parseIrishFieldTopic, parseNewsSitemap, parseRacingComGraphql, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseFeed, parseIrishFieldTopic, parseNewsSitemap, parseRacingComGraphql, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -8,6 +8,32 @@ const racingComSite = internationalConfig && internationalConfig.SITES.find((sit
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "tospo_news_sitemap",
+    name: "東スポ競馬 News Sitemap",
+    url: "https://tospo-keiba.jp/sitemap_news_1.xml",
+    baseUrl: "https://tospo-keiba.jp",
+    pathPrefixes: ["/breaking_news/"],
+    parse: parseNewsSitemap,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    readerDecorationUrls: [
+      "https://tospo-keiba.jp/news",
+      "https://tospo-keiba.jp/news?page=2"
+    ],
+    parseReaderDecoration: parseTospoReaderCards,
+    decorationImagePattern: /\/images\/article\/thumbnail\//i,
+    hydrateFromReader: true,
+    disableReaderImageFallback: true,
+    // 東スポのサイトマップは通常20件弱なので、既定8件で打ち切らず2ページ目の記事まで結合を検証する。
+    maxItems: 20,
+    hydrationLimit: 20,
+    hydrationConcurrency: 2,
+    hydrationTimeoutMs: 20000,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
   ...(racingComSite ? [{
     id: "racing_com_graphql",
     name: "Racing.com GraphQL",
