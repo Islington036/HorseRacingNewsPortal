@@ -2,8 +2,10 @@
   const definition = window.InternationalHorseRacingPortalDefinition;
   const { CONFIG, I18N, REGION_OPTIONS, SITE_ALL } = definition;
   const {
+    createRequestRateLimiter,
     dedupeByUrl,
     finalizeStructuredSourceItems,
+    isUrlHostname,
     mapWithConcurrency
   } = window.HorseRacingPortalCore;
 
@@ -23,11 +25,12 @@
       animationClearTimer: null
     };
 
-    // 全媒体が共有するReader要求の開始時刻を直列管理する。
-    // Promiseチェーンは「前の通信完了」ではなく「次の開始枠確保」までを待つため、通信自体は必要に応じて並行できる。
-    let textProxySchedule = Promise.resolve();
-    let textProxyNextAllowedAt = 0;
-    let textProxyBlockedUntil = 0;
+    // 全媒体のReader要求を同じ制御器へ通し、サイト並列取得や詳細補完が重なっても公開枠を超えにくくする。
+    const textProxyRateLimiter = createRequestRateLimiter({
+      minStartIntervalMs: CONFIG.TEXT_PROXY_MIN_INTERVAL_MS,
+      retryLimit: CONFIG.TEXT_PROXY_RETRY_LIMIT,
+      defaultRetryAfterMs: CONFIG.TEXT_PROXY_DEFAULT_RETRY_AFTER_MS
+    });
 
     const elements = {
       pageTitle: document.querySelector("#pageTitle"),
@@ -302,7 +305,7 @@
           // Sitemap/RSS/APIをJina Readerへ渡すとXML/JSON構造がMarkdown化され、空リンク見出しなどのノイズが混ざる。
           // Jinaは公式ページHTMLを読む最後の手段としてだけ使う。
           allowTextProxy:
-            sourceUrl === site.url ||
+            (sourceUrl === site.url && site.allowPageTextProxy !== false) ||
             (sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy) ||
             (sourceUrl === site.apiUrl && site.allowApiTextProxy),
           preferTextProxy:
@@ -608,14 +611,10 @@
     // 1つのプロキシURLから本文を取得し、HTTPエラーやタイムアウトを例外化する。
     // Readerだけは共通スケジューラで開始間隔を空け、429時にRetry-Afterを尊重して一度だけ再試行する。
     async function fetchProxyText(proxyUrl, requestHeaders = {}, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
-      const usesTextProxy = isTextProxyRequest(proxyUrl);
-      const retryLimit = usesTextProxy ? CONFIG.TEXT_PROXY_RETRY_LIMIT : 0;
-      let lastError = null;
+      const usesTextProxy = isUrlHostname(proxyUrl, "r.jina.ai");
 
-      for (let attempt = 0; attempt <= retryLimit; attempt += 1) {
-        // レート制御の待機後にAbortControllerを作り、待機時間を通信タイムアウトへ含めない。
-        if (usesTextProxy) await reserveTextProxyRequestSlot();
-
+      // 予約列の待機を通信タイムアウトへ含めないため、Controllerとtimerは実際の各試行開始時に作る。
+      const requestOnce = async () => {
         const controller = new AbortController();
         // サイト別に待機時間を上書きできるようにする。通常は全体設定を使い、
         // Racing TVのようにReader経由の初回応答が遅いサイトだけ個別に延長する。
@@ -628,23 +627,11 @@
             ...requestHeaders
           };
 
-          const response = await fetch(proxyUrl, {
+          return await fetch(proxyUrl, {
             credentials: "omit",
             signal: controller.signal,
             headers
           });
-
-          if (!response.ok) {
-            lastError = new Error(`HTTP ${response.status}`);
-            if (usesTextProxy && response.status === 429 && attempt < retryLimit) {
-              // 他の待機中Reader要求も同じ解除時刻を見るため、個別sleepではなく共有ブロック時刻を更新する。
-              blockTextProxyRequests(parseRetryAfterMs(response.headers.get("Retry-After")));
-              continue;
-            }
-            throw lastError;
-          }
-
-          return await response.text();
         } catch (error) {
           if (error.name === "AbortError") {
             throw new Error(t("timeout"));
@@ -653,60 +640,16 @@
         } finally {
           window.clearTimeout(timeoutId);
         }
+      };
+
+      // 通常API・CORSプロキシは従来どおり即時実行し、Readerだけ共有制御器へ渡す。
+      const response = usesTextProxy
+        ? await textProxyRateLimiter.run(requestOnce)
+        : await requestOnce();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
-
-      throw lastError || new Error(t("fetchFailed"));
-    }
-
-    // CONFIG.TEXT_PROXYが生成するURLかを判定し、通常APIやCORSプロキシへ不要な待機を入れない。
-    function isTextProxyRequest(value) {
-      try {
-        return new URL(String(value || "")).hostname === "r.jina.ai";
-      } catch (_error) {
-        return false;
-      }
-    }
-
-    // Reader要求の開始枠を予約する。キュー内の各タスクは実行時点の429ブロック時刻も再評価する。
-    function reserveTextProxyRequestSlot() {
-      const reservation = textProxySchedule
-        .catch(() => {})
-        .then(async () => {
-          // 待機中に別要求が429を受けると共有ブロック時刻が延長されるため、
-          // 一度の判定だけで開始せず、実際に開始可能になるまで最新時刻を読み直す。
-          while (true) {
-            const now = Date.now();
-            const waitUntil = Math.max(textProxyNextAllowedAt, textProxyBlockedUntil);
-            if (waitUntil <= now) break;
-            await waitForMilliseconds(waitUntil - now);
-          }
-          textProxyNextAllowedAt = Date.now() + CONFIG.TEXT_PROXY_MIN_INTERVAL_MS;
-        });
-
-      // 予約失敗で後続要求まで永久停止しないよう、共有チェーン側では例外を吸収する。
-      textProxySchedule = reservation.catch(() => {});
-      return reservation;
-    }
-
-    // 429を受けた時点からReader全体を停止し、すでに待機中の要求にも解除時刻を共有する。
-    function blockTextProxyRequests(delayMs) {
-      textProxyBlockedUntil = Math.max(textProxyBlockedUntil, Date.now() + delayMs);
-    }
-
-    // Retry-Afterの秒数・HTTP日付をミリ秒へ変換し、不正値なら設定済みの既定待機時間へ戻す。
-    function parseRetryAfterMs(value) {
-      const raw = String(value || "").trim();
-      const seconds = Number(raw);
-      if (raw && Number.isFinite(seconds) && seconds >= 0) return Math.max(1000, seconds * 1000);
-
-      const retryAt = Date.parse(raw);
-      if (raw && !Number.isNaN(retryAt)) return Math.max(1000, retryAt - Date.now());
-      return CONFIG.TEXT_PROXY_DEFAULT_RETRY_AFTER_MS;
-    }
-
-    // UIスレッドを塞がず、Readerの次回開始時刻まで非同期で待機する。
-    function waitForMilliseconds(delayMs) {
-      return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, delayMs)));
+      return await response.text();
     }
 
     const PARSERS = {
@@ -828,15 +771,14 @@
       // Racing PostはNext.jsの初期JSONに記事カードが入り、画像はURLではなくimage_idで持つ。
       // 汎用Markdown抽出だけだとロゴや鍵アイコンを拾うことがあるため、専用抽出を先に走らせる。
       if (site.id === "racingpost_news" || site.id === "racingpost_bloodstock") return extractRacingPostNextDataItems(doc, site);
-      // Racing TV公式APIは公式Origin以外のブラウザfetchで読めないため、静的HTMLではJina Readerを予備経路にする。
-      // 将来APIリレーを用意した場合に備え、API用抽出関数も残して同じURL重複排除へ流す。
-      if (site.id === "racingtv") return [...extractRacingTvApiItems(data, site), ...extractRacingTvMarkdownItems(rawText, site)];
+      // Racing TVはブラウザから公式APIを直接読めないため、現行設定どおりReader Markdownだけを解析する。
+      if (site.id === "racingtv") return extractRacingTvMarkdownItems(rawText, site);
       // At The RacesはJina Reader経由だと記事リンクが落ちるため、見出しと日付から公式URL形式を復元する。
       if (site.id === "attheraces") return extractAtTheRacesMarkdownItems(rawText, site);
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
       // 専用抽出で漏れた記事はPARSERS.generic側のJSON-LD/Feed/Markdown/カード抽出が引き続き拾う。
       if (site.id === "irishracing") return [...extractIrishRacingItems(doc, site), ...extractIrishRacingMarkdownItems(rawText, site)];
-      if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site, data);
+      if (site.id === "sportinglife_features") return extractSportingLifeItems(site, data);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
       // Thoroughbred Racingの3画面は同じ公式RSSを共有するため、JSON変換APIでもRSSでもcategory完全一致で分離する。
       // APIに当該カテゴリが0件なら空配列を正常結果として返し、別カテゴリの記事を混ぜない。
@@ -989,31 +931,6 @@
       if (/^https?:\/\//i.test(String(imageId))) return pickUsableImage(imageId);
 
       return `https://s3-eu-west-1.amazonaws.com/prod-media-racingpost/prod/images/169_408/${encodeURIComponent(String(imageId).trim())}.jpg`;
-    }
-
-    // Racing TV公式APIのJSONから、見出し・URL・日時・画像を抽出する。
-    function extractRacingTvApiItems(data, site) {
-      const articles = data && Array.isArray(data.articles) ? data.articles : [];
-
-      return articles.map((article) => {
-        const slug = String(article.slug || article.url || "").replace(/^\/+/, "");
-        const path = slug.startsWith("news/") ? `/${slug}` : `/news/${slug}`;
-        const hero = article.hero || {};
-
-        return buildRawNewsItem(site, {
-          title: article.headline || article.title,
-          url: article.url || path,
-          publishedAt: parseDate(
-            pickFirst(
-              article.published && article.published.datetime,
-              article.published_at,
-              article.publishedAt,
-              article.date
-            )
-          ),
-          thumbnail: pickUsableImage(hero.placeholder_image_url, hero.image_url, hero.url, hero.src)
-        });
-      }).filter(Boolean);
     }
 
     // The Irish FieldのLoad More APIから、血統ニュース記事を構造化して取り出す。
@@ -1348,20 +1265,12 @@
         .replace(/(\d{1,2})\.(\d{2})(?!\d)/g, "$1:$2");
     }
 
-    // Sporting Life公式API、または旧Next.js初期JSONから競馬記事だけを抽出する。
-    // APIレスポンスは記事配列そのもの、HTML経路は#__NEXT_DATA__配下なので、ここで入力形式を吸収する。
-    function extractSportingLifeItems(doc, site, apiData) {
-      const script = doc.querySelector("#__NEXT_DATA__");
-      const data = Array.isArray(apiData)
-        ? apiData
-        : script
-          ? safeJsonParse(script.textContent)
-          : null;
-      if (!data) return [];
+    // 現行のSporting Life公式API配列から競馬記事だけを抽出する。
+    // HTML経路はstructuredSourcesOnlyで使用しないため、旧Next.js初期JSONへの依存は残さない。
+    function extractSportingLifeItems(site, apiData) {
+      if (!Array.isArray(apiData)) return [];
 
-      // 配列APIでもNext.jsの深いJSONでも同じ条件で記事オブジェクトを取り出す。
-      // API配列の要素もflattenJsonObjectsへ渡すことで、抽出後の正規化処理を一系統に保つ。
-      return flattenJsonObjects(data, 12000)
+      return flattenJsonObjects(apiData, 12000)
         .filter((node) => node && node.article_id && node.title && node.published_date)
         .filter((node) => !node.category || node.category === "HORSE_RACING")
         .map((node) => buildRawNewsItem(site, {

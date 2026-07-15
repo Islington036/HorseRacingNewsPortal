@@ -2,18 +2,26 @@
 
 const assert = require("node:assert/strict");
 const {
+  createRequestRateLimiter,
   dedupeByUrl,
   finalizeStructuredSourceItems,
+  isUrlHostname,
   mapWithConcurrency,
-  parseJapaneseDate
+  parseJapaneseDate,
+  setUrlQueryParameter
 } = require("../shared/portal-core.js");
 
 async function run() {
   testStructuredSourceMerge();
   testStructuredEmptyResult();
   testJapaneseDateParsing();
+  testUrlUtilities();
   await testConcurrencyLimit();
-  console.log("portal-core: 4 tests passed");
+  await testConcurrentRateLimitedRuns();
+  await testRequestRateLimiter();
+  await testRateLimitExtensionDuringWait();
+  await testRateLimitAbort();
+  console.log("portal-core: 9 tests passed");
 }
 
 // APIと完全RSSで同じ記事を返しても、最新日時を残して新着順・上限件数へ揃うことを確認する。
@@ -53,6 +61,19 @@ function testJapaneseDateParsing() {
   assert.equal(parseJapaneseDate("12月31日 23:00", newYear).toISOString(), "2026-12-31T14:00:00.000Z");
 }
 
+// Reader判定ではホスト名を厳密比較し、キャッシュ更新パラメータは既存query/hashを壊さない。
+function testUrlUtilities() {
+  assert.equal(isUrlHostname("https://r.jina.ai/https://example.com", "r.jina.ai"), true);
+  assert.equal(isUrlHostname("https://r.jina.ai.example.com/", "r.jina.ai"), false);
+  assert.equal(isUrlHostname("not a url", "r.jina.ai"), false);
+
+  const updated = new URL(setUrlQueryParameter("https://example.com/news?page=2#latest", "portal_refresh", 123));
+  assert.equal(updated.searchParams.get("page"), "2");
+  assert.equal(updated.searchParams.get("portal_refresh"), "123");
+  assert.equal(updated.hash, "#latest");
+  assert.equal(setUrlQueryParameter("not a url", "portal_refresh", 123), "not a url");
+}
+
 // サイト取得ワーカーが設定した同時実行数を超えないことを確認する。
 async function testConcurrencyLimit() {
   let active = 0;
@@ -67,6 +88,120 @@ async function testConcurrencyLimit() {
 
   assert.equal(maximum, 2);
   assert.deepEqual(results, [2, 4, 6, 8, 10]);
+}
+
+// 同時投入したrunも予約順に開始枠を取り、開始時刻が設定間隔より狭くならないことを確認する。
+async function testConcurrentRateLimitedRuns() {
+  let currentTime = 0;
+  const starts = [];
+  const limiter = createRequestRateLimiter({
+    minStartIntervalMs: 10,
+    now: () => currentTime,
+    wait: async (delayMs) => {
+      currentTime += delayMs;
+    }
+  });
+
+  await Promise.all([0, 1, 2].map(() => limiter.run(async () => {
+    starts.push(currentTime);
+    return responseLike(200, null);
+  })));
+  assert.deepEqual(starts, [0, 10, 20]);
+}
+
+// 429を受けた要求はRetry-Afterだけ待って1回再試行し、通信開始時刻を決定的に検証する。
+async function testRequestRateLimiter() {
+  let currentTime = 100000;
+  const waits = [];
+  const starts = [];
+  const limiter = createRequestRateLimiter({
+    minStartIntervalMs: 10,
+    retryLimit: 1,
+    defaultRetryAfterMs: 30000,
+    now: () => currentTime,
+    wait: async (delayMs) => {
+      waits.push(delayMs);
+      currentTime += delayMs;
+    }
+  });
+
+  const response = await limiter.run(async (attempt) => {
+    starts.push(currentTime);
+    return responseLike(attempt === 0 ? 429 : 200, attempt === 0 ? "2" : null);
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(starts, [100000, 102000]);
+  assert.deepEqual(waits, [2000]);
+  assert.equal(limiter.parseRetryAfterMs("invalid"), 30000);
+  assert.equal(limiter.parseRetryAfterMs("-1"), 30000);
+  assert.equal(limiter.parseRetryAfterMs(new Date(currentTime + 5000).toUTCString()), 5000);
+}
+
+// 待機中に別要求がブロック時刻を延長しても、古い開始時刻のまま通信しないことを確認する。
+async function testRateLimitExtensionDuringWait() {
+  let currentTime = 0;
+  let waitCount = 0;
+  const waits = [];
+  let limiter;
+
+  limiter = createRequestRateLimiter({
+    minStartIntervalMs: 10,
+    defaultRetryAfterMs: 30,
+    now: () => currentTime,
+    wait: async (delayMs) => {
+      waits.push(delayMs);
+      waitCount += 1;
+      if (waitCount === 1) limiter.block(30);
+      currentTime += delayMs;
+    }
+  });
+
+  await limiter.reserve();
+  await limiter.reserve();
+  assert.equal(currentTime, 30);
+  assert.deepEqual(waits, [10, 20]);
+}
+
+// 見出し補完全体の期限に達した待機要求は通信を開始せず、後続予約は通常どおり継続できる。
+async function testRateLimitAbort() {
+  let currentTime = 0;
+  let pendingWait = null;
+  const limiter = createRequestRateLimiter({
+    minStartIntervalMs: 10,
+    now: () => currentTime,
+    wait: (delayMs) => new Promise((resolve) => {
+      pendingWait = () => {
+        currentTime += delayMs;
+        resolve();
+      };
+    })
+  });
+
+  await limiter.reserve();
+  const controller = new AbortController();
+  const abortedReservation = limiter.reserve(controller.signal);
+  // 予約処理が実際の待機へ入ってから中止し、開始前Abortだけでなく待機途中の経路も通す。
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(typeof pendingWait, "function");
+  controller.abort();
+  await assert.rejects(abortedReservation, (error) => error && error.name === "AbortError");
+
+  currentTime = 10;
+  await limiter.reserve();
+  assert.equal(currentTime, 10);
+}
+
+function responseLike(status, retryAfter) {
+  return {
+    status,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === "retry-after" ? retryAfter : null;
+      }
+    }
+  };
 }
 
 function item(url, publishedAt) {
