@@ -28,6 +28,12 @@
     const THOROUGHBRED_RACING_RSS = "https://www.thoroughbredracing.com/rss.xml";
     const THOROUGHBRED_RACING_RSS_API =
       "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(THOROUGHBRED_RACING_RSS);
+    // Paulick Report本体はDataDomeでブラウザ自動取得を拒否するため、Bing Newsのサイト限定RSSを索引として使う。
+    // rss2jsonはCORS許可済みで、抽出時にはBingの転送URLからPaulick Reportの元記事URLへ必ず戻す。
+    const PAULICK_REPORT_BING_RSS =
+      "https://www.bing.com/news/search?q=site%3Apaulickreport.com&format=rss";
+    const PAULICK_REPORT_BING_RSS_API =
+      "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(PAULICK_REPORT_BING_RSS);
 
     // ===== カスタマイズ用設定 =====
     const CONFIG = {
@@ -88,7 +94,7 @@
         { id: "bloodhorse", name: "BloodHorse", region: "america", url: "https://www.bloodhorse.com/horse-racing/articles/index", baseUrl: "https://www.bloodhorse.com", parser: "generic", pathHints: ["/horse-racing/articles/"], preferTextProxy: true, textProxyOnly: true },
         { id: "tdn_america", name: "TDN America", region: "america", url: "https://www.thoroughbreddailynews.com/category/news/", apiUrl: "https://www.thoroughbreddailynews.com/wp-json/wp/v2/posts?categories=1&per_page=20&_embed=1", feedUrl: "https://www.thoroughbreddailynews.com/category/news/feed/", baseUrl: "https://www.thoroughbreddailynews.com", parser: "generic", pathHints: ["/category/news/"], includeAnySameHost: true, tryDirect: true, structuredSourcesOnly: true },
         { id: "drf", name: "Daily Racing Form", region: "america", url: "https://www.drf.com/news/all-news", sitemapUrl: "https://www.drf.com/sitemap-news.xml", readerDecorationUrls: ["https://www.drf.com/news/all-news", "https://www.drf.com/news/all-news?page=2"], readerDecorationParser: "drf", readerDecorationImagePattern: /a-us\.storyblok\.com/i, readerDecorationImageOrigins: ["https://a-us.storyblok.com"], baseUrl: "https://www.drf.com", parser: "generic", pathPrefixes: ["/news/"], pathHints: ["/news/"], preferTextProxy: true, tryDirect: true },
-        { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: true, requireMarkdownImage: true, detailHydrationLimit: 18, detailHydrationConcurrency: 4, detailRequestTimeoutMs: 20000 },
+        { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", apiUrl: PAULICK_REPORT_BING_RSS_API, baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true },
         { id: "racing_com", name: "Racing.com", region: "australia", url: "https://www.racing.com/news/latest-news", apiUrl: "https://graphql.api.racing.com?query=" + encodeURIComponent(RACING_COM_NEWS_QUERY), baseUrl: "https://www.racing.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: false, tryDirect: true, requestHeaders: { "x-api-key": RACING_COM_PUBLIC_API_KEY, "content-type": "application/json;charset=UTF-8" } },
         { id: "racenet", name: "Racenet", region: "australia", url: "https://www.racenet.com.au/news", baseUrl: "https://www.racenet.com.au", parser: "generic", pathHints: ["/news/"], preferTextProxy: true },
         { id: "anzbloodstock", name: "ANZ Bloodstock News", region: "australia", url: "https://www.anzbloodstocknews.com/category/latest-news/", apiUrl: "https://www.anzbloodstocknews.com/wp-json/wp/v2/posts?categories=67&per_page=20&_embed=1", feedUrl: "https://www.anzbloodstocknews.com/category/latest-news/feed/", baseUrl: "https://www.anzbloodstocknews.com", parser: "generic", pathHints: ["/category/latest-news/"], includeAnySameHost: true, preferTextProxy: false, allowTextProxy: false, tryDirect: true, structuredSourcesOnly: true },

@@ -1,4 +1,4 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzNextData, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzNextData, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -10,6 +10,21 @@ const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url="
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "paulickreport_bing_rss",
+    name: "Paulick Report / Bing News RSS Index",
+    url: "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent("https://www.bing.com/news/search?q=site%3Apaulickreport.com&format=rss"),
+    baseUrl: "https://paulickreport.com",
+    parse: parsePaulickBingRssJson,
+    tryDirect: true,
+    requiredRoute: "direct",
+    pathPrefixes: ["/news/"],
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    // 現在のrss2json応答はNews:Imageを保持しないため、画像なしは既存ダミー表示の正常系とする。
+    minimumImageCoverage: 0
+  },
   {
     id: "sportinglife_official_api",
     name: "Sporting Life Official Racing API",

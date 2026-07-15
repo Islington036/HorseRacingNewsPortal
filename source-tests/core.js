@@ -218,6 +218,50 @@ export function parseRss2Json(text, source) {
     }));
 }
 
+// Bing Newsのサイト限定RSSを変換したJSONから、Paulick Reportの元記事URLを復元する。
+// 検索結果の転送リンクや/news/直下の固定導線は返さず、個別記事として判定できるURLだけを残す。
+export function parsePaulickBingRssJson(text) {
+  const data = JSON.parse(String(text || ""));
+  if (!data || data.status !== "ok" || !Array.isArray(data.items)) {
+    throw new Error("Paulick Report RSS索引を解析できませんでした");
+  }
+
+  return data.items
+    .map((item) => ({
+      title: item && item.title,
+      url: unwrapBingNewsUrl(item && item.link),
+      publishedAt: normalizeRss2JsonDate(item && item.pubDate),
+      // rss2jsonが元RSSのNews:Imageを省略した場合は空文字を返し、本体のダミー画像を検証対象にする。
+      thumbnail: firstValue(item && item.thumbnail, item && item.enclosure && item.enclosure.link)
+    }))
+    .filter((item) => isPaulickReportNewsArticle(item.url))
+    .sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// Bingの転送URLから公式記事URLだけを取り出す。外部ホストや不正URLは空文字として破棄する。
+function unwrapBingNewsUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!/(^|\.)bing\.com$/i.test(url.hostname)) return "";
+    const originalUrl = url.searchParams.get("url") || "";
+    const original = new URL(originalUrl);
+    return /(^|\.)paulickreport\.com$/i.test(original.hostname) ? original.href : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+// `/news/<category>/<slug>`以上の深さを持つPaulick Report記事だけを許可する。
+function isPaulickReportNewsArticle(value) {
+  try {
+    const url = new URL(String(value || ""));
+    const parts = url.pathname.split("/").filter(Boolean);
+    return /(^|\.)paulickreport\.com$/i.test(url.hostname) && parts[0] === "news" && parts.length >= 3;
+  } catch (_error) {
+    return false;
+  }
+}
+
 // `YYYY-MM-DD HH:mm:ss`をUTCのISO互換文字列へ直し、すでにタイムゾーン付きなら元値を維持する。
 function normalizeRss2JsonDate(value) {
   const raw = cleanText(value);
