@@ -72,7 +72,10 @@
           baseUrl: "https://keiba.sponichi.co.jp",
           parser: "sponichi",
           hydrateTruncatedTitles: true,
-          titleHydrationLimit: 8
+          // 一覧は多くの記事を「...」で省略するため、表示上限相当まで詳細タイトルを補完する。
+          // 同時接続は4件に抑え、記事ページと公開プロキシへ過剰な負荷を掛けない。
+          titleHydrationLimit: 18,
+          titleHydrationConcurrency: 4
         }
       ]
     };
