@@ -281,6 +281,8 @@ const state = {
       // API側のページ上限で指定カテゴリが0件でも、後続の完全RSSには記事がある場合がある。
       // 正常な空配列を保持したまま予備経路を試し、予備経路まで失敗した場合だけ0件成功へ戻す。
       let validEmptyStructuredResult = null;
+      // 部分件数APIと完全RSSを併用する媒体では、先に成功した結果を捨てずURL重複排除して結合する。
+      const mergedStructuredItems = [];
 
       for (const sourceUrl of sourceUrls) {
         // preferTextProxyは「公式ページHTMLをJina ReaderでMarkdown化したい」サイト向けの指定。
@@ -329,6 +331,12 @@ const state = {
               : await parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
+              if (site.mergeStructuredSources && sourceUrl !== site.url) {
+                // rss2jsonは無料経路で先頭の一部だけを返すため、API成功後も完全RSSまで一度だけ進む。
+                // 同じURLを別プロキシで再取得せず、次のsourceUrlへ移るため内側ループを終了する。
+                mergedStructuredItems.push(...items);
+                break;
+              }
               // 1つの取得経路で記事が取れたら、そのサイトは成功扱いにする。
               // 後続プロキシまで回すと同じ記事の再取得が増え、公開プロキシの制限にも引っかかりやすい。
               return items;
@@ -351,7 +359,12 @@ const state = {
         }
       }
 
-      if (validEmptyStructuredResult) return validEmptyStructuredResult;
+      if (mergedStructuredItems.length > 0) {
+        return dedupeByUrl(mergedStructuredItems)
+          .sort((left, right) => right.publishedAt - left.publishedAt)
+          .slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+      }
+      if (validEmptyStructuredResult !== null) return validEmptyStructuredResult;
       throw lastError || new Error(t("noExtract"));
     }
 
@@ -1753,7 +1766,9 @@ const state = {
       doc.querySelectorAll("item, entry").forEach((entry) => {
         const title = textOf(entry, "title");
         const linkElement = entry.querySelector("link");
-        const link = linkElement && (linkElement.getAttribute("href") || linkElement.textContent);
+        const rawLink = linkElement && (linkElement.getAttribute("href") || linkElement.textContent);
+        // 古いRSSだけhttpを返す媒体は、API結果とのURL重複排除と安全な遷移のためhttpsへ統一する。
+        const link = site.forceHttps ? String(rawLink || "").replace(/^http:\/\//i, "https://") : rawLink;
         const encoded = textOf(entry, "content\\:encoded") || textOf(entry, "description") || textOf(entry, "summary");
         const image =
           textOf(entry, "image") ||
