@@ -895,7 +895,7 @@
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
       // 専用抽出で漏れた記事はPARSERS.generic側のJSON-LD/Feed/Markdown/カード抽出が引き続き拾う。
       if (site.id === "irishracing") return [...extractIrishRacingItems(doc, site), ...extractIrishRacingMarkdownItems(rawText, site)];
-      if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site);
+      if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site, data);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
       // Thoroughbred Racingの3画面は同じ公式RSSを共有するため、JSON変換APIでもRSSでもcategory完全一致で分離する。
       // APIに当該カテゴリが0件なら空配列を正常結果として返し、別カテゴリの記事を混ぜない。
@@ -1365,12 +1365,19 @@
         .replace(/(\d{1,2})\.(\d{2})(?!\d)/g, "$1:$2");
     }
 
-    // Sporting LifeのNext.js初期JSONから競馬記事だけを抽出する。
-    function extractSportingLifeItems(doc, site) {
+    // Sporting Life公式API、または旧Next.js初期JSONから競馬記事だけを抽出する。
+    // APIレスポンスは記事配列そのもの、HTML経路は#__NEXT_DATA__配下なので、ここで入力形式を吸収する。
+    function extractSportingLifeItems(doc, site, apiData) {
       const script = doc.querySelector("#__NEXT_DATA__");
-      const data = script ? safeJsonParse(script.textContent) : null;
+      const data = Array.isArray(apiData)
+        ? apiData
+        : script
+          ? safeJsonParse(script.textContent)
+          : null;
       if (!data) return [];
 
+      // 配列APIでもNext.jsの深いJSONでも同じ条件で記事オブジェクトを取り出す。
+      // API配列の要素もflattenJsonObjectsへ渡すことで、抽出後の正規化処理を一系統に保つ。
       return flattenJsonObjects(data, 12000)
         .filter((node) => node && node.article_id && node.title && node.published_date)
         .filter((node) => !node.category || node.category === "HORSE_RACING")
@@ -1380,7 +1387,9 @@
           publishedAt: parseDate(node.published_date),
           thumbnail: pickSportingLifeImage(node)
         }))
-        .filter(Boolean);
+        .filter(Boolean)
+        // APIの配列順は公開時刻順とは限らないため、単体抽出の段階でも新着順へ揃える。
+        .sort((left, right) => right.publishedAt - left.publishedAt);
     }
 
     // Sporting Lifeの記事IDとSEOタイトルから、元記事URLを組み立てる。
