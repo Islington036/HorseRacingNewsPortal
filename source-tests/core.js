@@ -358,6 +358,30 @@ export function parseIrishRacingReaderCards(text) {
   });
 }
 
+// DRF一覧では画像と見出しリンクが別行に並ぶため、直前のStoryblok写真を次の記事見出しへ結び付ける。
+// 広告画像は記事見出しへ到達する前にリセットされ、/news/記事URL以外には採用しない。
+export function parseDrfReaderCards(text) {
+  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
+  const items = [];
+  let pendingImage = "";
+
+  lines.forEach((line) => {
+    // Storyblok変換URLには filters:format(webp) の括弧が入るため、行末の閉じ括弧までを貪欲に読む。
+    const image = line.match(/^!\[[^\]]*\]\((https?:\/\/a-us\.storyblok\.com\/.+)\)$/i);
+    if (image) {
+      pendingImage = image[1];
+      return;
+    }
+
+    const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.drf\.com\/news\/(?!all-news(?:[?#/]|$))[^)]+)\)$/i);
+    if (!heading) return;
+    if (pendingImage) items.push({ title: heading[1], url: heading[2], thumbnail: pendingImage });
+    pendingImage = "";
+  });
+
+  return items;
+}
+
 // Jina Readerの記事出力から、ページタイトル・公開日時・最初の実写真を抽出する。
 function parseReaderArticle(text, articleUrl) {
   const raw = String(text || "");

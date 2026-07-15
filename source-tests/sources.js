@@ -1,4 +1,4 @@
-import { parseAtom, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -8,6 +8,28 @@ const racingComSite = internationalConfig && internationalConfig.SITES.find((sit
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "drf_news_sitemap",
+    name: "Daily Racing Form News Sitemap",
+    url: "https://www.drf.com/sitemap-news.xml",
+    baseUrl: "https://www.drf.com",
+    allowedOrigins: ["https://www.drf.com"],
+    pathPrefixes: ["/news/"],
+    parse: parseNewsSitemap,
+    tryDirect: true,
+    requiredRoute: "direct",
+    readerDecorationUrls: [
+      "https://www.drf.com/news/all-news",
+      "https://www.drf.com/news/all-news?page=2"
+    ],
+    parseReaderDecoration: parseDrfReaderCards,
+    decorationImagePattern: /a-us\.storyblok\.com/i,
+    decorationImageOrigins: ["https://a-us.storyblok.com"],
+    hydrationTimeoutMs: 20000,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.25
+  },
   {
     id: "irishracing_news_sitemap",
     name: "Irish Racing News Sitemap",
