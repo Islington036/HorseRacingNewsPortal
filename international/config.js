@@ -35,6 +35,8 @@
       MIN_DAYS_BACK: 1,
       MAX_DAYS_BACK: 3,
       REQUEST_TIMEOUT_MS: 12000,
+      // 全媒体を同時に接続せず、完了順描画を維持したまま公開プロキシへの負荷を抑える。
+      SITE_FETCH_CONCURRENCY: 6,
       MAX_ITEMS_PER_SITE: 18,
       ALLOW_UNDATED_LATEST_ITEMS: false,
       UNDATED_ITEMS_PER_SITE: 0,
@@ -63,6 +65,10 @@
         { id: "new-zealand", name: "ニュージーランド" },
         { id: "hong-kong", name: "香港" }
       ],
+      // SiteConfigの主な取得制御:
+      // tryDirectは公式URLの直接取得、structuredSourcesOnlyは一覧HTMLへの後退禁止、
+      // allowEmptyStructuredは正常な0件応答、mergeStructuredSourcesはAPI/RSS併合を表す。
+      // allow*/prefer*TextProxyはXML/JSONではなくReaderで読む例外媒体だけに指定する。
       SITES: [
         { id: "racingpost_news", name: "Racing Post News", region: "europe", url: "https://www.racingpost.com/news/", sitemapUrl: "https://www.racingpost.com/sitemaps/news-sitemap.xml", baseUrl: "https://www.racingpost.com", parser: "generic", pathPrefixes: ["/news/"], excludePathHints: ["/news/betting-offers/"], preferTextProxy: true, allowSitemapTextProxy: true, preferSitemapTextProxy: true, readerDetailHydration: true, detailHydrationLimit: 8, detailHydrationConcurrency: 2, detailRequestTimeoutMs: 20000 },
         { id: "racingpost_bloodstock", name: "Racing Post Bloodstock", region: "europe", url: "https://www.racingpost.com/bloodstock/", sitemapUrl: "https://www.racingpost.com/sitemaps/news-sitemap.xml", baseUrl: "https://www.racingpost.com", parser: "generic", pathPrefixes: ["/bloodstock/"], preferTextProxy: true, allowSitemapTextProxy: true, preferSitemapTextProxy: true, readerDetailHydration: true, detailHydrationLimit: 8, detailHydrationConcurrency: 2, detailRequestTimeoutMs: 20000 },
