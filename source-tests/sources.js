@@ -1,4 +1,4 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzNextData, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -54,13 +54,16 @@ export const SOURCES = [
     minimumImageCoverage: 0
   },
   {
-    id: "ttrausnz_next_data",
-    name: "TTR AusNZ Next.js Data",
+    id: "ttrausnz_reader",
+    name: "TTR AusNZ Reader Listing",
     url: "https://www.ttrausnz.com.au/",
     baseUrl: "https://www.ttrausnz.com.au",
-    parse: parseTtrAusNzNextData,
-    // 公式ページはCORSを許可しないため、HTML構造を維持する公開プロキシ経路を検証する。
-    allowTextProxy: false,
+    parse: parseTtrAusNzReader,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    textProxyOnly: true,
+    requiredRoute: "text-proxy",
+    timeoutMs: 20000,
     forbiddenUrlPatterns: [
       /\/(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)\/?$/i,
       /\/looking-ahead(?:-|\/|$)/i
@@ -68,7 +71,8 @@ export const SOURCES = [
     requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
-    minimumImageCoverage: 1
+    // Reader一覧に写真がない記事は、本体のダミー画像へ渡せることを正常条件にする。
+    minimumImageCoverage: 0
   },
   {
     id: "sanspo_keiba_sitemap_reader",
