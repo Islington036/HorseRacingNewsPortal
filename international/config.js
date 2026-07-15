@@ -41,6 +41,11 @@
       MIN_DAYS_BACK: 1,
       MAX_DAYS_BACK: 3,
       REQUEST_TIMEOUT_MS: 12000,
+      // Jina Readerの公開枠へ全媒体が同時接続するとHTTP 429になるため、開始間隔を20回/分未満へ抑える。
+      // 429応答にRetry-Afterがない場合は1分待ち、同じ要求を一度だけ再試行する。
+      TEXT_PROXY_MIN_INTERVAL_MS: 3200,
+      TEXT_PROXY_RETRY_LIMIT: 1,
+      TEXT_PROXY_DEFAULT_RETRY_AFTER_MS: 60000,
       // 全媒体を同時に接続せず、完了順描画を維持したまま公開プロキシへの負荷を抑える。
       SITE_FETCH_CONCURRENCY: 6,
       MAX_ITEMS_PER_SITE: 18,
