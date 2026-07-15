@@ -278,6 +278,9 @@ const state = {
         site.structuredSourcesOnly ? null : site.url
       ].filter(Boolean))];
       let lastError = null;
+      // API側のページ上限で指定カテゴリが0件でも、後続の完全RSSには記事がある場合がある。
+      // 正常な空配列を保持したまま予備経路を試し、予備経路まで失敗した場合だけ0件成功へ戻す。
+      let validEmptyStructuredResult = null;
 
       for (const sourceUrl of sourceUrls) {
         // preferTextProxyは「公式ページHTMLをJina ReaderでMarkdown化したい」サイト向けの指定。
@@ -325,10 +328,17 @@ const state = {
               ? await parsePaulickReportResponse(html, site)
               : await parseSiteResponse(html, requestSite);
 
-            if (items.length > 0 || (site.allowEmptyStructured && sourceUrl !== site.url)) {
+            if (items.length > 0) {
               // 1つの取得経路で記事が取れたら、そのサイトは成功扱いにする。
               // 後続プロキシまで回すと同じ記事の再取得が増え、公開プロキシの制限にも引っかかりやすい。
               return items;
+            }
+
+            if (site.allowEmptyStructured && sourceUrl !== site.url) {
+              // 有効なAPI/RSS応答が0件なら同じURLを別プロキシで取り直さず、次の構造化URLへ進む。
+              // APIが先頭10件だけを返しても、次の完全RSSで指定カテゴリを回収できる余地を残す。
+              validEmptyStructuredResult = items;
+              break;
             }
 
             // HTTPとしては成功しても抽出0件なら、ユーザーには「取得はしたが読めなかった」と分かるエラーにする。
@@ -341,6 +351,7 @@ const state = {
         }
       }
 
+      if (validEmptyStructuredResult) return validEmptyStructuredResult;
       throw lastError || new Error(t("noExtract"));
     }
 
