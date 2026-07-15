@@ -2,9 +2,12 @@
   const definition = window.JapaneseHorseRacingPortalDefinition;
   const { CONFIG, I18N, SITE_ALL } = definition;
   const {
+    createRequestRateLimiter,
     dedupeByUrl,
+    isUrlHostname,
     mapWithConcurrency,
-    parseJapaneseDate
+    parseJapaneseDate,
+    setUrlQueryParameter
   } = window.HorseRacingPortalCore;
 
     const state = {
@@ -20,6 +23,13 @@
       animatedItemIds: new Set(),
       animationClearTimer: null
     };
+
+    // 東スポ一覧、サンスポ詳細、見出し補完が同じReader公開枠を使うため、全経路を1制御器へ集約する。
+    const textProxyRateLimiter = createRequestRateLimiter({
+      minStartIntervalMs: CONFIG.TEXT_PROXY_MIN_INTERVAL_MS,
+      retryLimit: CONFIG.TEXT_PROXY_RETRY_LIMIT,
+      defaultRetryAfterMs: CONFIG.TEXT_PROXY_DEFAULT_RETRY_AFTER_MS
+    });
 
     const elements = {
       pageTitle: document.querySelector("#pageTitle"),
@@ -364,16 +374,9 @@
     async function fetchReaderText(url, cacheBust = false) {
       // 東スポではReaderの通常キャッシュが原サイトより遅れるため、媒体設定で指定された場合だけ時刻クエリを付ける。
       // サンスポ等の安定した記事URLへ不要なクエリを加えず、Readerキャッシュと配信元負荷を適切に利用する。
-      let freshUrl = url;
-      if (cacheBust) {
-        try {
-          const parsed = new URL(url);
-          parsed.searchParams.set("portal_refresh", String(Date.now()));
-          freshUrl = parsed.href;
-        } catch (_error) {
-          // 設定URLが壊れていても、元URLの取得を一度試して通常の通信エラーへ委ねる。
-        }
-      }
+      const freshUrl = cacheBust
+        ? setUrlQueryParameter(url, "portal_refresh", Date.now())
+        : url;
       return fetchProxyText(CONFIG.TEXT_PROXY(freshUrl), CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
     }
 
@@ -485,40 +488,51 @@
     }
 
     async function fetchProxyText(proxyUrl, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS, accept, externalSignal) {
-      const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-      // 呼び出し元が媒体全体の期限を管理している場合、その中止を現在のfetchにも伝播する。
-      // これがないとPromise側だけがタイムアウトし、古いHTTP接続が背後で残り続ける。
-      const abortFromExternal = () => controller.abort();
-      if (externalSignal) {
-        if (externalSignal.aborted) {
-          controller.abort();
-        } else {
-          externalSignal.addEventListener("abort", abortFromExternal, { once: true });
+      const usesTextProxy = isUrlHostname(proxyUrl, "r.jina.ai");
+
+      // Readerの再試行ごとに独立したControllerを作り、予約列での待機を通信タイムアウトへ含めない。
+      const requestOnce = async () => {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+        // 呼び出し元が見出し補完全体の期限を管理している場合、その中止を現在のfetchにも伝播する。
+        // これがないとPromise側だけがタイムアウトし、古いHTTP接続が背後で残り続ける。
+        const abortFromExternal = () => controller.abort();
+        if (externalSignal) {
+          if (externalSignal.aborted) {
+            controller.abort();
+          } else {
+            externalSignal.addEventListener("abort", abortFromExternal, { once: true });
+          }
         }
-      }
+
+        try {
+          return await fetch(proxyUrl, {
+            credentials: "omit",
+            signal: controller.signal,
+            headers: { Accept: accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
+          });
+        } finally {
+          window.clearTimeout(timeoutId);
+          if (externalSignal) {
+            externalSignal.removeEventListener("abort", abortFromExternal);
+          }
+        }
+      };
 
       try {
-        const response = await fetch(proxyUrl, {
-          signal: controller.signal,
-          headers: { Accept: accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
-        });
-
+        // Readerだけを共通制御器へ渡し、通常のCORSプロキシは従来どおり待機なしで実行する。
+        const response = usesTextProxy
+          ? await textProxyRateLimiter.run(requestOnce, { signal: externalSignal })
+          : await requestOnce();
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-
         return await response.text();
       } catch (error) {
-        if (error.name === "AbortError") {
+        if (error.name === "AbortError" || (externalSignal && externalSignal.aborted)) {
           throw new Error(t("timeout"));
         }
         throw error;
-      } finally {
-        window.clearTimeout(timeoutId);
-        if (externalSignal) {
-          externalSignal.removeEventListener("abort", abortFromExternal);
-        }
       }
     }
 
@@ -534,16 +548,6 @@
         ];
       },
 
-      nikkan(doc, site) {
-        return [
-          ...extractJsonLdItems(doc, site),
-          ...extractAnchorsWithDates(doc, site, {
-            linkSelector: "a[href*='/keiba/news/'], a[href*='/keiba/column/']",
-            datePattern: /\[?(\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2})\]?/
-          })
-        ];
-      },
-
       atom(doc, site) {
         return extractAtomItems(doc, site);
       },
@@ -555,14 +559,6 @@
             linkSelector: "a[href*='/news/']",
             datePattern: /(\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2})/
           })
-        ];
-      },
-
-      tospo(doc, site) {
-        return [
-          ...extractTospoArticleList(doc, site),
-          ...extractJsonLdItems(doc, site),
-          ...extractAnchorsWithTimeElements(doc, site)
         ];
       },
 
@@ -637,22 +633,6 @@
       });
 
       return items;
-    }
-
-    function extractTospoArticleList(doc, site) {
-      const component = doc.querySelector("article-list-slug-main");
-      const mainData = component && safeJsonParse(component.getAttribute(":main"));
-      const articleList = mainData && Array.isArray(mainData.articleList) ? mainData.articleList : [];
-
-      return articleList.map((article) => ({
-        title: article.title || article.imgAlt,
-        url: article.linkUrl,
-        publishedAt: article.date && article.date.date && article.date.time
-          ? parseDate(`${article.date.date} ${article.date.time}`)
-          : null,
-        thumbnail: article.imgUrl,
-        source: site.name
-      }));
     }
 
     function extractJsonLdItems(doc, site) {

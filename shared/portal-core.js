@@ -27,6 +27,114 @@
     return results;
   }
 
+  // HTTP要求の開始時刻を直列予約し、429応答時はRetry-Afterに従って後続要求も待機させる。
+  // 通信完了までは直列化しないため、開始間隔を守りつつ遅い応答が全媒体を不必要に塞がない。
+  function createRequestRateLimiter(options = {}) {
+    const minStartIntervalMs = normalizeNonNegativeNumber(options.minStartIntervalMs, 0);
+    const defaultRetryAfterMs = normalizeNonNegativeNumber(options.defaultRetryAfterMs, 60000);
+    const retryLimit = Math.max(0, Math.floor(normalizeNonNegativeNumber(options.retryLimit, 0)));
+    const now = typeof options.now === "function" ? options.now : Date.now;
+    const wait = typeof options.wait === "function" ? options.wait : waitForMilliseconds;
+    let reservationQueue = Promise.resolve();
+    let nextStartAt = 0;
+    let blockedUntil = 0;
+
+    // 1要求分の開始枠を予約する。待機中に別要求が429を受ける可能性があるため、
+    // 一度sleepした後も共有ブロック時刻を読み直し、実際に開始可能になるまで繰り返す。
+    function reserve(signal) {
+      const reservation = reservationQueue
+        .catch(() => {})
+        .then(async () => {
+          while (true) {
+            throwIfAborted(signal);
+            const currentTime = now();
+            const waitUntil = Math.max(nextStartAt, blockedUntil);
+            if (waitUntil <= currentTime) break;
+            await waitWithSignal(waitUntil - currentTime, signal, wait);
+          }
+          nextStartAt = now() + minStartIntervalMs;
+        });
+
+      // 1件の中止・失敗で後続予約まで永久停止しないよう、共有チェーン側だけ例外を吸収する。
+      reservationQueue = reservation.catch(() => {});
+      return reservation;
+    }
+
+    // 指定ミリ秒だけ全要求の開始を停止する。複数の429が重なった場合は最も遅い解除時刻を残す。
+    function block(delayMs) {
+      const normalizedDelay = normalizeNonNegativeNumber(delayMs, defaultRetryAfterMs);
+      blockedUntil = Math.max(blockedUntil, now() + normalizedDelay);
+    }
+
+    // Retry-Afterは秒数とHTTP-dateの両形式を受け付ける。ブラウザからヘッダーを読めない場合や
+    // 不正値の場合は、設定済みの保守的な既定時間へ戻す。
+    function parseRetryAfterMs(value) {
+      const raw = String(value || "").trim();
+      // HTTP仕様のdelay-secondsは数字だけを許可する。負数をDate.parseへ渡すと、
+      // 一部ブラウザが過去日付として解釈して1秒再試行になるため、曖昧値は既定待機へ戻す。
+      if (/^\d+$/.test(raw)) {
+        const seconds = Number(raw);
+        return Math.max(1000, seconds * 1000);
+      }
+
+      // HTTP-dateには英語の曜日または月名が入るため、単なる数値・記号列を日付として誤認しない。
+      if (/[A-Za-z]{3}/.test(raw)) {
+        const retryAt = Date.parse(raw);
+        if (!Number.isNaN(retryAt)) return Math.max(1000, retryAt - now());
+      }
+      return defaultRetryAfterMs;
+    }
+
+    // Response互換値を返すHTTP処理を実行する。429なら後続を止め、設定回数だけ同じ処理を再試行する。
+    // 最後の試行も429だった場合はそのResponseを呼び出し元へ返し、媒体側で通常のHTTPエラー表示にする。
+    async function run(request, runOptions = {}) {
+      if (typeof request !== "function") throw new TypeError("request must be a function");
+
+      let response = null;
+      for (let attempt = 0; attempt <= retryLimit; attempt += 1) {
+        await reserve(runOptions.signal);
+        response = await request(attempt);
+        if (!response || Number(response.status) !== 429) return response;
+
+        const retryAfter = response.headers && typeof response.headers.get === "function"
+          ? response.headers.get("Retry-After")
+          : null;
+        // 再試行回数を使い切った場合も、後続要求が直後に同じ429を受けないようブロックは更新する。
+        block(parseRetryAfterMs(retryAfter));
+        if (attempt >= retryLimit) return response;
+      }
+      return response;
+    }
+
+    return Object.freeze({
+      block,
+      parseRetryAfterMs,
+      reserve,
+      run
+    });
+  }
+
+  // URLが指定ホストを正確に指すか確認する。文字列の部分一致を使わず、偽装ホストを除外する。
+  function isUrlHostname(value, hostname) {
+    try {
+      return new URL(String(value || "")).hostname.toLowerCase() === String(hostname || "").toLowerCase();
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // 取得元URLの既存query/hashを保ったまま、Readerキャッシュ更新用などの指定パラメータを設定する。
+  // 不正URLは呼び出し元で通常の通信エラーとして扱えるよう、加工せず元の文字列を返す。
+  function setUrlQueryParameter(value, name, parameterValue) {
+    try {
+      const url = new URL(String(value || ""));
+      url.searchParams.set(String(name || ""), String(parameterValue));
+      return url.href;
+    } catch (_error) {
+      return String(value || "");
+    }
+  }
+
   // query/hashだけが異なる同一記事をまとめ、公開日時が新しい候補を残す。
   function dedupeByUrl(items) {
     const byUrl = new Map();
@@ -121,10 +229,55 @@
     return Number.isNaN(timestamp) ? 0 : timestamp;
   }
 
+  function normalizeNonNegativeNumber(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : fallback;
+  }
+
+  function waitForMilliseconds(delayMs) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
+  }
+
+  // 予約待機中に媒体全体の期限へ達した場合、実HTTPを開始せず直ちに待機列から離脱する。
+  function waitWithSignal(delayMs, signal, wait) {
+    throwIfAborted(signal);
+    if (!signal) return Promise.resolve(wait(delayMs));
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", handleAbort);
+        callback(value);
+      };
+      const handleAbort = () => finish(reject, createAbortError());
+
+      signal.addEventListener("abort", handleAbort, { once: true });
+      Promise.resolve(wait(delayMs)).then(
+        (value) => finish(resolve, value),
+        (error) => finish(reject, error)
+      );
+    });
+  }
+
+  function throwIfAborted(signal) {
+    if (signal && signal.aborted) throw createAbortError();
+  }
+
+  function createAbortError() {
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    return error;
+  }
+
   return Object.freeze({
+    createRequestRateLimiter,
     dedupeByUrl,
     finalizeStructuredSourceItems,
+    isUrlHostname,
     mapWithConcurrency,
-    parseJapaneseDate
+    parseJapaneseDate,
+    setUrlQueryParameter
   });
 });

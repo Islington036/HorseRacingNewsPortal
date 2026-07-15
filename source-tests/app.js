@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20260715-reader-throttle";
-import { SOURCES } from "./sources.js?v=20260715-reader-throttle";
+import { runSourceTest } from "./core.js?v=20260715-fetch-common";
+import { SOURCES } from "./sources.js?v=20260715-fetch-common";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
