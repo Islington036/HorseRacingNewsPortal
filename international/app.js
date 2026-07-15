@@ -762,7 +762,9 @@ const state = {
       generic(doc, site, rawText, data) {
         return dedupeRawItems([
           ...extractSiteSpecificItems(doc, site, rawText, data),
-          ...extractStructuredJsonItems(data, site),
+          // カテゴリ分離を担う専用API抽出器がある媒体は、同じJSONを汎用走査へ二重投入しない。
+          // rss2json全体を再走査すると、共有RSSの別カテゴリ記事まで当該サイトへ混入するためである。
+          ...extractStructuredJsonItems(site.exclusiveStructuredJson ? null : data, site),
           ...extractNewsSitemapItems(doc, site, rawText),
           ...extractFeedItems(doc, site),
           ...extractMarkdownItems(rawText, site),
