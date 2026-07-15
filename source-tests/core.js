@@ -796,6 +796,13 @@ function matchesSourcePath(value, source) {
     return false;
   }
 
+  // Sitemapが複数種別の記事を含む媒体では、許可する記事パス全体を正規表現で限定する。
+  // RegExpにglobal指定があっても前回testのlastIndexを持ち越さないよう、判定前に必ず0へ戻す。
+  if (source.articlePathPattern instanceof RegExp) {
+    source.articlePathPattern.lastIndex = 0;
+    if (!source.articlePathPattern.test(parsed.pathname)) return false;
+  }
+
   return !excludes.some((hint) => path.includes(String(hint).toLowerCase()));
 }
 

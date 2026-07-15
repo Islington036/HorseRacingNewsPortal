@@ -191,6 +191,10 @@ const state = {
       if (site.id === "tospo" && site.sitemapUrl) {
         return fetchTospoStructuredItems(site);
       }
+      // サンスポは一覧HTMLではなく競馬専用Sitemapを記事URLの正本にし、詳細Readerから公式メタ情報を補う。
+      if (site.id === "sanspo" && site.sitemapUrl) {
+        return fetchSanspoStructuredItems(site);
+      }
 
       const html = await fetchText(site.url, site.accept);
       // RSS/AtomはHTMLとして解釈するとlink要素の属性やXML名前空間を失うため、媒体設定の文書型で解析する。
@@ -216,7 +220,7 @@ const state = {
     // 東スポ競馬のサイトマップと一覧カードを統合し、記事だけを返す。
     // サイトマップに存在しない固定ページやランキングリンクは、一覧に出ていても採用しない。
     async function fetchTospoStructuredItems(site) {
-      const sitemapText = await fetchReaderText(site.sitemapUrl);
+      const sitemapText = await fetchReaderText(site.sitemapUrl, site.readerCacheBust);
       const sitemapItems = extractTospoSitemapItems(sitemapText, site);
       if (sitemapItems.length === 0) {
         throw new Error(t("noExtract"));
@@ -225,7 +229,7 @@ const state = {
       // 一覧の片方が一時的に失敗しても、取得できたページのカードだけで更新を継続する。
       // ただし両方とも失敗した場合は、日時を持たないReaderサイトマップだけでは表示できないため失敗扱いにする。
       const listingResults = await Promise.allSettled(
-        site.readerListingUrls.map(async (url) => extractTospoReaderCards(await fetchReaderText(url), site))
+        site.readerListingUrls.map(async (url) => extractTospoReaderCards(await fetchReaderText(url, site.readerCacheBust), site))
       );
       const listingItems = listingResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
       if (listingItems.length === 0) {
@@ -261,17 +265,115 @@ const state = {
       return dedupeByUrl(normalizedItems);
     }
 
-    // Jina Readerを直接呼び出す。公開CORSプロキシを二重に通さないため、Reader URLへ通常のfetchを行う。
-    async function fetchReaderText(url) {
-      // 東スポではReaderの通常キャッシュが原サイトより遅れ、最新記事が欠ける事例が確認された。
-      // 元URLへ更新時刻を付けるとReaderが最新内容を再取得するため、更新操作ごとに一意なURLとして要求する。
-      let freshUrl = url;
+    // サンスポの競馬SitemapをURL許可リストとして読み、記事Readerで見出し・公開日時・写真を補完する。
+    // Sitemapのlastmodは本文修正でも更新されるため、公開日時には使わずPublished Timeだけを採用する。
+    async function fetchSanspoStructuredItems(site) {
+      let sitemapText = "";
       try {
-        const parsed = new URL(url);
-        parsed.searchParams.set("portal_refresh", String(Date.now()));
-        freshUrl = parsed.href;
+        // XML構造を保つ公開CORSプロキシを先に試し、失敗時だけReaderのURL一覧へフォールバックする。
+        sitemapText = await fetchText(site.sitemapUrl, "application/xml,text/xml;q=0.9,*/*;q=0.8");
       } catch (_error) {
-        // 設定URLが壊れていても、元URLの取得を一度試して通常の通信エラーへ委ねる。
+        sitemapText = await fetchReaderText(site.sitemapUrl, false);
+      }
+
+      const sitemapItems = extractSanspoSitemapItems(sitemapText, site)
+        .slice(0, site.detailHydrationLimit || 8);
+      if (sitemapItems.length === 0) throw new Error(t("noExtract"));
+
+      // 記事詳細への同時接続を少数に抑え、片方が失敗しても他の記事の補完結果は残す。
+      const hydratedItems = await mapWithConcurrency(
+        sitemapItems,
+        site.detailHydrationConcurrency || 2,
+        async (item) => {
+          try {
+            const detailText = await fetchReaderText(item.url, false);
+            const detail = extractSanspoReaderArticle(detailText, item.url);
+            return {
+              title: detail.title,
+              url: item.url,
+              publishedAt: detail.publishedAt,
+              thumbnail: detail.thumbnail,
+              source: site.name
+            };
+          } catch (_error) {
+            return null;
+          }
+        }
+      );
+
+      const normalizedItems = hydratedItems
+        .filter(Boolean)
+        .map((item) => normalizeItem(item, site))
+        .filter(Boolean)
+        .filter((item) => isSanspoKeibaArticleUrl(item.url));
+      if (normalizedItems.length === 0) throw new Error(t("noExtract"));
+      return dedupeByUrl(normalizedItems);
+    }
+
+    // サンスポSitemapの生XMLとReader化されたURL一覧を、日時を持たない記事候補へ変換する。
+    function extractSanspoSitemapItems(text, site) {
+      const doc = new DOMParser().parseFromString(text, "application/xml");
+      let urls = [];
+
+      if (!doc.querySelector("parsererror")) {
+        urls = [...doc.getElementsByTagNameNS("*", "url")]
+          .map((entry) => textByLocalName(entry, "loc"));
+      } else {
+        urls = [...String(text || "").matchAll(/https?:\/\/www\.sanspo\.com\/race\/article\/(?:general|basic)\/20\d{6}-[A-Z0-9]+\/?/gi)]
+          .map((match) => match[0]);
+      }
+
+      return [...new Set(urls)]
+        .filter(isSanspoKeibaArticleUrl)
+        .map((url) => ({ title: "", url, publishedAt: null, thumbnail: "", source: site.name }));
+    }
+
+    // 記事Readerのヘッダーから完全見出しと公開日時を、本文先頭からサンスポ配信の実写真だけを読む。
+    function extractSanspoReaderArticle(text, articleUrl) {
+      const raw = String(text || "");
+      const title = cleanTitle((raw.match(/^Title:\s*(.+)$/im) || [])[1]);
+      const publishedAt = parseDate((raw.match(/^Published Time:\s*(.+)$/im) || [])[1]);
+      const linkedImage = [...raw.matchAll(/\[!\[[^\]]*\]\((https?:\/\/www\.sanspo\.com\/resizer\/v2\/[^)]+)\)\]\((https?:\/\/www\.sanspo\.com\/race\/article\/[^)]+)\)/gi)]
+        .find((match) => canonicalArticleUrl(match[2]).startsWith(canonicalArticleUrl(articleUrl)));
+
+      return {
+        title,
+        publishedAt,
+        thumbnail: linkedImage ? linkedImage[1] : ""
+      };
+    }
+
+    // 非同期詳細取得を指定件数ずつ実行し、配信元と公開プロキシへ過剰な同時接続を行わない。
+    async function mapWithConcurrency(items, concurrency, iteratee) {
+      const results = new Array(items.length);
+      let nextIndex = 0;
+      const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
+
+      async function runWorker() {
+        while (nextIndex < items.length) {
+          const currentIndex = nextIndex;
+          nextIndex += 1;
+          results[currentIndex] = await iteratee(items[currentIndex], currentIndex);
+        }
+      }
+
+      await Promise.all(Array.from({ length: workerCount }, runWorker));
+      return results;
+    }
+
+    // Jina Readerを直接呼び出す。公開CORSプロキシを二重に通さないため、Reader URLへ通常のfetchを行う。
+    async function fetchReaderText(url, cacheBust = false) {
+      // 東スポではReaderの通常キャッシュが原サイトより遅れるため、媒体設定で指定された場合だけ時刻クエリを付ける。
+      // サンスポ等の安定した記事URLへ不要なクエリを加えず、Readerキャッシュと配信元負荷を適切に利用する。
+      let freshUrl = url;
+      if (cacheBust) {
+        try {
+          const parsed = new URL(url);
+          parsed.searchParams.set("portal_refresh", String(Date.now()));
+          freshUrl = parsed.href;
+        } catch (_error) {
+          // 設定URLが壊れていても、元URLの取得を一度試して通常の通信エラーへ委ねる。
+        }
       }
       return fetchProxyText(CONFIG.TEXT_PROXY(freshUrl), CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
     }
@@ -339,6 +441,17 @@ const state = {
       try {
         const parsed = new URL(value);
         return parsed.origin === "https://tospo-keiba.jp" && /^\/breaking_news\/\d+\/?$/i.test(parsed.pathname);
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    // サンスポ競馬Sitemapで許可する一般記事・基本情報記事の正式URLだけを通す。
+    function isSanspoKeibaArticleUrl(value) {
+      try {
+        const parsed = new URL(value);
+        return parsed.origin === "https://www.sanspo.com" &&
+          /^\/race\/article\/(?:general|basic)\/20\d{6}-[A-Z0-9]+\/?$/i.test(parsed.pathname);
       } catch (_error) {
         return false;
       }
