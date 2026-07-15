@@ -666,6 +666,65 @@ export function parseRacingComGraphql(text) {
   }));
 }
 
+// TTR AusNZのNext.js初期データから、エディション内の実ニュースだけを抽出する。
+// 広告型に加えてnormal型の固定ページslugも除外し、記事写真は各pageのcoverImageを優先する。
+export function parseTtrAusNzNextData(text) {
+  const doc = new DOMParser().parseFromString(String(text || ""), "text/html");
+  const script = doc.querySelector("#__NEXT_DATA__");
+  const data = script ? JSON.parse(script.textContent) : null;
+  if (!data) throw new Error("TTR AusNZのNext.jsデータを解析できませんでした");
+
+  const skipTypes = new Set(["interstitial", "sponsored", "social", "results", "winners", "top20"]);
+  const editionNodes = flattenObjectsForSourceTest(data, 20000)
+    .filter((node) => node && Array.isArray(node.pages) && (node.date || node.slug || node.publishedAt));
+  const items = [];
+
+  editionNodes.forEach((edition) => {
+    const editionSlug = edition.slug || edition.date || "";
+    // 日付だけのedition.dateよりepochのpublishedAtを優先し、同日版の実公開時刻を保持する。
+    const editionDate = firstValue(edition.publishedAt, edition.date);
+
+    edition.pages.forEach((page) => {
+      if (!page || !page.headline || !page.slug || skipTypes.has(page.articleType)) return;
+      if (isTtrAusNzFixedPage(page.slug)) return;
+      const pageEditionSlug = page.editionSlug || editionSlug;
+      if (!pageEditionSlug) return;
+
+      items.push({
+        title: page.headline,
+        url: `/edition/${pageEditionSlug}/${page.slug}`,
+        publishedAt: firstValue(page.publishedAt, editionDate),
+        thumbnail: firstValue(page.coverImage, edition.coverImage)
+      });
+    });
+  });
+
+  return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
+// TTRのニュース一覧に常設される案内・索引ページをslugで除外する。
+function isTtrAusNzFixedPage(slug) {
+  return /^(?:job-board|wednesday-trivia|2026-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(String(slug || "")) ||
+    /^looking-ahead(?:-|$)/i.test(String(slug || ""));
+}
+
+// Next.js JSONを循環なしで深さ優先走査し、記事配列を持つエディション候補を探す。
+function flattenObjectsForSourceTest(value, limit) {
+  const result = [];
+  const stack = [value];
+
+  while (stack.length > 0 && result.length < limit) {
+    const current = stack.pop();
+    if (!current || typeof current !== "object") continue;
+    result.push(current);
+    Object.values(current).forEach((child) => {
+      if (child && typeof child === "object") stack.push(child);
+    });
+  }
+
+  return result;
+}
+
 // Readerのヘッダーより後ろにあるJSONオブジェクトを取り出し、通常JSONと同じパーサーへ渡す。
 function parseJsonPayload(text) {
   const raw = String(text || "").trim();

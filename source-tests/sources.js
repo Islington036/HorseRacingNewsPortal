@@ -1,4 +1,4 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseRss2Json, parseTospoReaderCards, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseNewsSitemap, parseRacingComGraphql, parseRss2Json, parseTospoReaderCards, parseTtrAusNzNextData, parseWordPressPosts } from "./core.js";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -10,6 +10,18 @@ const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url="
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    id: "ttrausnz_next_data",
+    name: "TTR AusNZ Next.js Data",
+    url: "https://www.ttrausnz.com.au/",
+    baseUrl: "https://www.ttrausnz.com.au",
+    parse: parseTtrAusNzNextData,
+    // 公式ページはCORSを許可しないため、HTML構造を維持する公開プロキシ経路を検証する。
+    allowTextProxy: false,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
   {
     id: "sanspo_keiba_sitemap_reader",
     name: "サンスポ競馬 Sitemap + Reader",
