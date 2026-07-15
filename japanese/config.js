@@ -46,6 +46,11 @@
           id: "tospo",
           name: "東スポ競馬",
           url: "https://tospo-keiba.jp/news",
+          sitemapUrl: "https://tospo-keiba.jp/sitemap_news_1.xml",
+          readerListingUrls: [
+            "https://tospo-keiba.jp/news",
+            "https://tospo-keiba.jp/news?page=2"
+          ],
           baseUrl: "https://tospo-keiba.jp",
           parser: "tospo"
         },

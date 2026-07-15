@@ -16,9 +16,12 @@ export async function runSourceTest(source) {
   }
 
   const response = await fetchAndParseSource(source);
-  const parsedItems = source.hydrateFromReader
-    ? await hydrateItemsFromReader(response.parsedItems, source)
+  const decoratedItems = source.readerDecorationUrls
+    ? await decorateItemsFromReader(response.parsedItems, source)
     : response.parsedItems;
+  const parsedItems = source.hydrateFromReader
+    ? await hydrateItemsFromReader(decoratedItems, source)
+    : decoratedItems;
   const items = parsedItems
     .map((item) => normalizeItem(item, source))
     .filter(Boolean)
@@ -71,7 +74,7 @@ async function fetchAndParseSource(source) {
     candidates.push({ url: source.url, route: "direct" });
   }
   if (source.allowTextProxy && source.preferTextProxy) {
-    candidates.push({ url: TEXT_PROXY(source.url), route: "text-proxy" });
+    candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
   PROXY_BUILDERS.forEach((buildUrl, index) => {
     candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
@@ -79,7 +82,7 @@ async function fetchAndParseSource(source) {
   if (source.allowTextProxy && !source.preferTextProxy) {
     // Sitemapの生XMLを公開CORSプロキシで取得できない場合だけ、ReaderからURL候補を得る。
     // ReaderではXMLのタイトル・日時・画像が失われるため、後段のhydrateItemsFromReaderで記事詳細を補う。
-    candidates.push({ url: TEXT_PROXY(source.url), route: "text-proxy" });
+    candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
 
   let lastError = null;
@@ -208,13 +211,13 @@ async function hydrateItemsFromReader(items, source) {
     if (item.title && item.publishedAt && item.thumbnail) return item;
 
     try {
-      const text = await fetchText(TEXT_PROXY(item.url), { timeoutMs: source.hydrationTimeoutMs });
-      const detail = parseReaderArticle(text);
+      const text = await fetchText(buildTextProxyUrl(item.url, source), { timeoutMs: source.hydrationTimeoutMs });
+      const detail = parseReaderArticle(text, item.url);
       return {
         ...item,
-        title: detail.title || item.title,
-        publishedAt: detail.publishedAt || item.publishedAt,
-        thumbnail: detail.thumbnail || item.thumbnail
+        title: item.title || detail.title,
+        publishedAt: item.publishedAt || detail.publishedAt,
+        thumbnail: item.thumbnail || (source.disableReaderImageFallback ? "" : detail.thumbnail)
       };
     } catch (_error) {
       return null;
@@ -222,11 +225,118 @@ async function hydrateItemsFromReader(items, source) {
   }).then((results) => results.filter(Boolean));
 }
 
+// 一覧Readerを媒体ごとに最大数ページだけ取得し、同じ記事URLへ結び付いたカード画像を候補へ装飾する。
+// タイトル一致では同名記事や短縮見出しを誤結合するため、URLのorigin+pathname完全一致だけを使う。
+async function decorateItemsFromReader(items, source) {
+  const decorationByUrl = new Map();
+
+  for (const listingUrl of source.readerDecorationUrls) {
+    try {
+      const text = await fetchText(buildTextProxyUrl(listingUrl, source), { timeoutMs: source.hydrationTimeoutMs });
+      if (typeof source.parseReaderDecoration === "function") {
+        source.parseReaderDecoration(text).forEach((item) => {
+          if (!isAllowedDecorationImage(item.thumbnail, source)) return;
+          const key = canonicalArticleUrl(item.url);
+          if (key && !decorationByUrl.has(key)) decorationByUrl.set(key, item);
+        });
+        continue;
+      }
+
+      for (const match of String(text || "").matchAll(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/[^)]+)\)/g)) {
+        const image = unwrapImageProxyUrl(match[1]);
+        const key = canonicalArticleUrl(match[2]);
+        if (!key || !isUsableArticleImage(image)) continue;
+        if (source.decorationImagePattern && !source.decorationImagePattern.test(image)) continue;
+        if (!decorationByUrl.has(key)) decorationByUrl.set(key, { thumbnail: image });
+      }
+    } catch (_error) {
+      // 片方の一覧ページだけ失敗しても、取得できたページの画像で継続する。
+      // 必須画像が不足すれば最終の画像カバレッジ判定でテスト不合格になる。
+    }
+  }
+
+  return items.map((item) => {
+    const decoration = decorationByUrl.get(canonicalArticleUrl(item.url)) || {};
+    return {
+      ...item,
+      title: item.title || decoration.title || "",
+      publishedAt: item.publishedAt || decoration.publishedAt || "",
+      thumbnail: item.thumbnail || decoration.thumbnail || ""
+    };
+  });
+}
+
+// Readerのキャッシュ遅延が確認された媒体だけ、取得元URLへ時刻クエリを付けて最新レスポンスを要求する。
+// Reader自体のURLへクエリを付けるのではなく、Readerが読む元URLへ付けることが重要。
+function buildTextProxyUrl(url, source) {
+  if (!source.readerCacheBust) return TEXT_PROXY(url);
+
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("portal_refresh", String(Date.now()));
+    return TEXT_PROXY(parsed.href);
+  } catch (_error) {
+    return TEXT_PROXY(url);
+  }
+}
+
+// 媒体専用パーサーが返した画像にも、共通のパス・origin制約を必ず適用する。
+function isAllowedDecorationImage(value, source) {
+  const image = unwrapImageProxyUrl(value);
+  if (!isUsableArticleImage(image)) return false;
+  if (source.decorationImagePattern && !source.decorationImagePattern.test(image)) return false;
+
+  if (Array.isArray(source.decorationImageOrigins) && source.decorationImageOrigins.length > 0) {
+    try {
+      return source.decorationImageOrigins.includes(new URL(image).origin);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// 東スポ競馬のReader一覧カードから、同じ行の画像・記事URL・完全見出しと直後の日付時刻を読む。
+// カードごとの「ニュース / YYYY/MM/DD / 曜日 / HH:mm」という並びだけを対象にし、ランキング欄を除外する。
+export function parseTospoReaderCards(text) {
+  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
+  const items = [];
+
+  lines.forEach((line, index) => {
+    const card = line.match(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)(?:!\[[^\]]*\]\([^)]+\))?\s*\[([^\]]+)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)/i);
+    if (!card || !sameArticleUrl(card[2], card[4])) return;
+
+    // Readerでは日時がカード行の後ろへ出力される。次のカードへ到達する前の範囲だけを探索し、
+    // 直前カードの日時を一つ後の記事へ誤って割り当てないようにする。
+    const nextCardOffset = lines
+      .slice(index + 1)
+      .findIndex((value) => /tospo-keiba\.jp\/breaking_news\/\d+/i.test(value));
+    const endIndex = nextCardOffset === -1 ? index + 8 : index + 1 + nextCardOffset;
+    const nearby = lines.slice(index + 1, Math.min(endIndex, index + 8));
+    const date = nearby.find((value) => /^20\d{2}\/\d{1,2}\/\d{1,2}$/.test(value));
+    const time = nearby.find((value) => /^\d{1,2}:\d{2}$/.test(value));
+    if (!date || !time) return;
+
+    items.push({
+      title: card[3],
+      url: card[4],
+      publishedAt: `${date} ${time}`,
+      thumbnail: card[1]
+    });
+  });
+
+  return items;
+}
+
 // Jina Readerの記事出力から、ページタイトル・公開日時・最初の実写真を抽出する。
-function parseReaderArticle(text) {
+function parseReaderArticle(text, articleUrl) {
   const raw = String(text || "");
-  const images = [...raw.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)]
-    .map((match) => unwrapImageProxyUrl(match[1]))
+  const linkedImage = [...raw.matchAll(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/[^)]+)\)/g)]
+    .find((match) => sameArticleUrl(match[2], articleUrl));
+  const images = [linkedImage && linkedImage[1], ...[...raw.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/g)].map((match) => match[1])]
+    .filter(Boolean)
+    .map(unwrapImageProxyUrl)
     .filter(isUsableArticleImage);
 
   return {
@@ -234,6 +344,21 @@ function parseReaderArticle(text) {
     publishedAt: cleanText((raw.match(/^Published Time:\s*(.+)$/im) || [])[1]),
     thumbnail: images[0] || ""
   };
+}
+
+// クエリ・hash・末尾スラッシュを除いた記事URLが一致するかを確認する。
+function sameArticleUrl(left, right) {
+  return canonicalArticleUrl(left) === canonicalArticleUrl(right) && Boolean(canonicalArticleUrl(left));
+}
+
+// origin+pathnameだけを結合キーにし、解析パラメータや末尾スラッシュの差を無視する。
+function canonicalArticleUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+  } catch (_error) {
+    return "";
+  }
 }
 
 // Next.js画像変換URLのurlクエリに実画像がある場合は、元画像へ戻してホットリンク判定を安定させる。
@@ -476,9 +601,14 @@ function matchesSourcePath(value, source) {
   }
 
   const path = parsed.pathname.toLowerCase();
+  const allowedOrigins = Array.isArray(source.allowedOrigins) ? source.allowedOrigins : [];
   const prefixes = Array.isArray(source.pathPrefixes) ? source.pathPrefixes : [];
   const includes = Array.isArray(source.pathHints) ? source.pathHints : [];
   const excludes = Array.isArray(source.excludePathHints) ? source.excludePathHints : [];
+
+  if (allowedOrigins.length && !allowedOrigins.includes(parsed.origin)) {
+    return false;
+  }
 
   if (prefixes.length && !prefixes.some((prefix) => path.startsWith(String(prefix).toLowerCase()))) {
     return false;
