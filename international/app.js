@@ -1,8 +1,13 @@
 (function () {
   const definition = window.InternationalHorseRacingPortalDefinition;
   const { CONFIG, I18N, REGION_OPTIONS, SITE_ALL } = definition;
+  const {
+    dedupeByUrl,
+    finalizeStructuredSourceItems,
+    mapWithConcurrency
+  } = window.HorseRacingPortalCore;
 
-const state = {
+    const state = {
       allItems: [],
       errors: [],
       siteLatest: {},
@@ -135,8 +140,9 @@ const state = {
       const failedSiteIds = new Set();
       let completedCount = 0;
 
-      // 通信は従来どおり並列に始めるが、Promise.allSettledで最後まで待たず、各Promiseの完了時点で画面へ反映する。
-      const tasks = CONFIG.SITES.map(async (site) => {
+      // 取得対象は一括でキューへ入れ、同時接続数だけを制限して公開プロキシの429と連鎖タイムアウトを抑える。
+      // 全件完了を待ってから描画するのではなく、各媒体の完了時点で従来どおり途中結果を反映する。
+      await mapWithConcurrency(CONFIG.SITES, CONFIG.SITE_FETCH_CONCURRENCY, async (site) => {
         try {
           const items = await fetchSite(site);
           if (runId !== state.refreshRunId) return;
@@ -172,8 +178,6 @@ const state = {
           }));
         }
       });
-
-      await Promise.all(tasks);
       if (runId !== state.refreshRunId) return;
 
       const fetchedItems = collectFetchedItems(fetchedItemsBySite);
@@ -322,7 +326,7 @@ const state = {
         for (const proxyUrl of buildProxyUrls(sourceUrl, requestSite)) {
           try {
             // directFetch用のURLだけはサイト設定の追加ヘッダーを付ける。公開プロキシには余計なヘッダーを渡さない。
-            // ここで「proxyUrl === sourceUrl」を条件にしておくと、プロキシ自体へRacing TV用ヘッダーを投げる事故を防げる。
+            // 現在はRacing.comの公開APIヘッダーが対象で、今後ほかの媒体が追加されても同じ境界を維持する。
             const requestHeaders = proxyUrl === sourceUrl ? site.requestHeaders || {} : {};
             const html = await fetchProxyText(proxyUrl, requestHeaders, requestSite.requestTimeoutMs);
             const items = site.id === "paulickreport"
@@ -359,12 +363,12 @@ const state = {
         }
       }
 
-      if (mergedStructuredItems.length > 0) {
-        return dedupeByUrl(mergedStructuredItems)
-          .sort((left, right) => right.publishedAt - left.publishedAt)
-          .slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
-      }
-      if (validEmptyStructuredResult !== null) return validEmptyStructuredResult;
+      const structuredResult = finalizeStructuredSourceItems(
+        mergedStructuredItems,
+        validEmptyStructuredResult,
+        site.maxItems || CONFIG.MAX_ITEMS_PER_SITE
+      );
+      if (structuredResult.hasResult) return structuredResult.items;
       throw lastError || new Error(t("noExtract"));
     }
 
@@ -511,24 +515,6 @@ const state = {
       // 一覧側で取れた画像を最後の保険として加える。詳細側が広告画像だけだった場合もダミー化を避けやすい。
       images.push(candidate.thumbnail);
       return images.map((image) => absoluteUrl(image, site.baseUrl));
-    }
-
-    // 少数の詳細ページを同時実行数付きで処理する。公開プロキシへの一斉アクセスを抑えるための小さなワーカー。
-    async function mapWithConcurrency(items, concurrency, iteratee) {
-      const results = new Array(items.length);
-      let nextIndex = 0;
-      const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
-
-      async function runWorker() {
-        while (nextIndex < items.length) {
-          const currentIndex = nextIndex;
-          nextIndex += 1;
-          results[currentIndex] = await iteratee(items[currentIndex], currentIndex);
-        }
-      }
-
-      await Promise.all(Array.from({ length: workerCount }, runWorker));
-      return results;
     }
 
     // 取得したレスポンスをJSON/XML/HTMLとして解釈し、サイト設定に応じた抽出結果へ正規化する。
@@ -2626,19 +2612,6 @@ const state = {
     // 同じURLの記事候補が複数ある場合、実写真を持つ候補を優先するための判定。
     function hasArticleThumbnail(item) {
       return Boolean(item && item.thumbnail && item.thumbnail !== CONFIG.FALLBACK_THUMBNAIL && isUsableImageValue(item.thumbnail));
-    }
-
-    // 正規化後の記事をURL単位で重複排除し、新しい日時のものを残す。
-    function dedupeByUrl(items) {
-      const byUrl = new Map();
-      items.forEach((item) => {
-        const key = item.url.replace(/[?#].*$/, "");
-        const existing = byUrl.get(key);
-        if (!existing || item.publishedAt > existing.publishedAt) {
-          byUrl.set(key, item);
-        }
-      });
-      return [...byUrl.values()];
     }
 
     // タイトル全体がMarkdownリンクの場合、表示文字列とリンク先URLを分離する。

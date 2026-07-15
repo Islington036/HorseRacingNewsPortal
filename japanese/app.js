@@ -1,8 +1,13 @@
 (function () {
   const definition = window.JapaneseHorseRacingPortalDefinition;
   const { CONFIG, I18N, SITE_ALL } = definition;
+  const {
+    dedupeByUrl,
+    mapWithConcurrency,
+    parseJapaneseDate
+  } = window.HorseRacingPortalCore;
 
-const state = {
+    const state = {
       allItems: [],
       errors: [],
       siteLatest: {},
@@ -99,6 +104,9 @@ const state = {
     }
 
     async function refreshAll() {
+      // 公開APIからの連打を含め、進行中の更新と新しい更新がキャッシュを書き合わないよう再入を防ぐ。
+      if (state.isLoading) return;
+
       state.isLoading = true;
       state.errors = [];
       state.siteLatest = {};
@@ -154,10 +162,20 @@ const state = {
       state.isLoading = false;
       elements.refreshButton.disabled = false;
       elements.refreshButton.textContent = t("refresh");
+      // render内の通常表示ステータスを先に確定させ、更新結果の詳細ステータスを最後に上書きする。
+      render();
 
       const visibleCount = getDateScopedItems().length;
-      if (visibleCount > 0) {
-        setStatus(t("completedStatus"), t("completedMessage", { days: state.activeDaysBack, count: visibleCount }));
+      if (failedSiteIds.size === CONFIG.SITES.length) {
+        setStatus(
+          t("failedStatus"),
+          state.allItems.length > 0 ? t("failedUsingCache") : t("failedNoItems")
+        );
+      } else if (visibleCount > 0) {
+        setStatus(
+          state.errors.length > 0 ? t("partialFailedStatus") : t("completedStatus"),
+          t("completedMessage", { days: state.activeDaysBack, count: visibleCount })
+        );
       } else if (merged.length > 0) {
         setStatus(t("noWindowStatus"), t("noWindowAfterFetch", { days: state.activeDaysBack }));
       } else if (state.allItems.length > 0) {
@@ -166,7 +184,6 @@ const state = {
         setStatus(t("failedStatus"), t("failedNoItems"));
       }
 
-      render();
     }
 
     function getPreservedItemsForFailedSites(previousItems, failedSiteIds) {
@@ -341,24 +358,6 @@ const state = {
         publishedAt,
         thumbnail: linkedImage ? linkedImage[1] : ""
       };
-    }
-
-    // 非同期詳細取得を指定件数ずつ実行し、配信元と公開プロキシへ過剰な同時接続を行わない。
-    async function mapWithConcurrency(items, concurrency, iteratee) {
-      const results = new Array(items.length);
-      let nextIndex = 0;
-      const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
-
-      async function runWorker() {
-        while (nextIndex < items.length) {
-          const currentIndex = nextIndex;
-          nextIndex += 1;
-          results[currentIndex] = await iteratee(items[currentIndex], currentIndex);
-        }
-      }
-
-      await Promise.all(Array.from({ length: workerCount }, runWorker));
-      return results;
     }
 
     // Jina Readerを直接呼び出す。公開CORSプロキシを二重に通さないため、Reader URLへ通常のfetchを行う。
@@ -1040,30 +1039,7 @@ const state = {
     }
 
     function parseDate(value) {
-      if (!value) return null;
-      const raw = String(value).trim();
-
-      const native = new Date(raw);
-      if (!Number.isNaN(native.getTime())) return native;
-
-      let match = raw.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2}):(\d{2})/);
-      if (match) return makeJstDate(match[1], match[2], match[3], match[4], match[5]);
-
-      match = raw.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s*(\d{1,2}):(\d{2})/);
-      if (match) return makeJstDate(match[1], match[2], match[3], match[4], match[5]);
-
-      match = raw.match(/(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2}):(\d{2})/);
-      if (match) {
-        const nowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
-        return makeJstDate(nowJst.getFullYear(), match[1], match[2], match[3], match[4]);
-      }
-
-      return null;
-    }
-
-    function makeJstDate(year, month, day, hour, minute) {
-      const utcMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 9, Number(minute));
-      return new Date(utcMs);
+      return parseJapaneseDate(value);
     }
 
     function isWithinWindow(item) {
@@ -1078,18 +1054,6 @@ const state = {
       const now = new Date();
       const cutoff = now.getTime() - daysBack * 24 * 60 * 60 * 1000;
       return item.publishedAt.getTime() >= cutoff && item.publishedAt.getTime() <= now.getTime() + 60 * 60 * 1000;
-    }
-
-    function dedupeByUrl(items) {
-      const byUrl = new Map();
-      items.forEach((item) => {
-        const key = item.url.replace(/[?#].*$/, "");
-        const existing = byUrl.get(key);
-        if (!existing || item.publishedAt > existing.publishedAt) {
-          byUrl.set(key, item);
-        }
-      });
-      return [...byUrl.values()];
     }
 
     function cleanTitle(value) {

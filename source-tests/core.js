@@ -1,5 +1,6 @@
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_ITEMS = 8;
+const { mapWithConcurrency } = window.HorseRacingPortalCore;
 
 // 本体と同じ公開プロキシ候補を使うが、テストでは選択された1媒体にしかアクセスしない。
 const PROXY_BUILDERS = [
@@ -578,24 +579,6 @@ function unwrapImageProxyUrl(value) {
 // ロゴ・SVG・追跡画像を除き、記事カードに使えるHTTP画像だけを残す。
 function isUsableArticleImage(value) {
   return isHttpUrl(value) && !/\.svg(?:[?#]|$)|logo|icon|avatar|author|google|facebook|twitter|placeholder|no[-_]?image|transparent|pixel|bookmakers?|\/janus\/|trustarc|consent\.|powered-by|advert|sponsor/i.test(value);
-}
-
-// 外部記事の詳細取得を少数並列に抑え、1媒体のテストが配信元へ一斉接続しないようにする。
-async function mapWithConcurrency(items, concurrency, iteratee) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
-
-  async function runWorker() {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      results[currentIndex] = await iteratee(items[currentIndex], currentIndex);
-    }
-  }
-
-  await Promise.all(Array.from({ length: workerCount }, runWorker));
-  return results;
 }
 
 // 日本版本体と同じlocalName基準でAtom entryを読み、alternateリンクと画像enclosureを分離する。
