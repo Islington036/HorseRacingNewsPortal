@@ -325,7 +325,7 @@ const state = {
               ? await parsePaulickReportResponse(html, site)
               : await parseSiteResponse(html, requestSite);
 
-            if (items.length > 0) {
+            if (items.length > 0 || (site.allowEmptyStructured && sourceUrl !== site.url)) {
               // 1つの取得経路で記事が取れたら、そのサイトは成功扱いにする。
               // 後続プロキシまで回すと同じ記事の再取得が増え、公開プロキシの制限にも引っかかりやすい。
               return items;
@@ -885,6 +885,11 @@ const state = {
       if (site.id === "irishracing") return [...extractIrishRacingItems(doc, site), ...extractIrishRacingMarkdownItems(rawText, site)];
       if (site.id === "sportinglife_features") return extractSportingLifeItems(doc, site);
       if (site.id === "irishfield_bloodstock") return [...extractIrishFieldApiItems(data, site), ...extractIrishFieldItems(doc, site)];
+      // Thoroughbred Racingの3画面は同じ公式RSSを共有するため、JSON変換APIでもRSSでもcategory完全一致で分離する。
+      // APIに当該カテゴリが0件なら空配列を正常結果として返し、別カテゴリの記事を混ぜない。
+      if (["trc_racing", "trc_breeding_sales", "trc_sales_previews"].includes(site.id)) {
+        return extractThoroughbredRacingRssJsonItems(data, site);
+      }
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
       // TDN、ANZ Bloodstock、The Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
       // TDNはRSSを予備経路として残しており、RSSレスポンス時はdataがnullになるため空配列を返す。
@@ -896,6 +901,36 @@ const state = {
       if (site.id === "racing_com") return [...extractRacingComGraphqlItems(data, site), ...extractRacingComMarkdownItems(rawText, site)];
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
       return [];
+    }
+
+    // rss2jsonのCORS対応レスポンスから、指定された公式RSSカテゴリの記事だけを抽出する。
+    // pubDateはタイムゾーンなしUTC文字列なので末尾Zを補い、閲覧端末のローカル時刻として誤解釈させない。
+    function extractThoroughbredRacingRssJsonItems(data, site) {
+      if (!data) return [];
+      if (data.status !== "ok" || !Array.isArray(data.items)) {
+        // JSONとしては読めてもAPI側エラーの場合、0件成功にはせず公式RSSの予備経路へ進める。
+        throw new Error("Thoroughbred Racing RSS APIの応答を解析できませんでした");
+      }
+
+      return data.items
+        .filter((item) => {
+          const categories = Array.isArray(item && item.categories)
+            ? item.categories.map(cleanWhitespace)
+            : [];
+          return !site.rssCategory || categories.includes(site.rssCategory);
+        })
+        .map((item) => {
+          const rawDate = cleanWhitespace(item && item.pubDate);
+          const utcDate = rawDate.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
+          return {
+            title: item && item.title,
+            url: String(item && item.link || "").replace(/^http:\/\/(www\.)?thoroughbredracing\.com/i, "https://www.thoroughbredracing.com"),
+            publishedAt: parseDate(utcDate ? `${utcDate[1]}T${utcDate[2]}Z` : rawDate),
+            thumbnail: pickFirst(item && item.thumbnail, item && item.enclosure && item.enclosure.link),
+            source: site.name
+          };
+        })
+        .filter((item) => item.title && item.url && item.publishedAt && isCandidateArticleUrl(item.url, site));
     }
 
     // Racing PostのNext.js初期データから、記事カードと実写真URLを復元する。
