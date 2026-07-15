@@ -818,6 +818,24 @@ export function parseTtrAusNzReader(text) {
   return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
 }
 
+// LOVERACING.NZのReader出力から、画像・見出し・日付・個別記事URLが一体になったカードだけを抽出する。
+// ナビゲーションにも多数の/news/リンクがあるため、`/News/<数値ID>/<slug>.aspx`へ厳格に限定する。
+export function parseLoveracingReader(text) {
+  const items = [];
+  const cardPattern = /\[!\[[^\]]*\]\((https?:\/\/loveracing\.nz\/Common\/Image\.ashx\?[^\r\n]+?)\)\s*#{4,5}\s*([^\]]+?)\s+(\d{1,2}\s+[A-Za-z]+,\s*\d{4})\]\((https?:\/\/loveracing\.nz\/News\/\d+\/[^)\s]+\.aspx)\)/gi;
+
+  for (const match of String(text || "").matchAll(cardPattern)) {
+    items.push({
+      title: match[2],
+      url: match[4],
+      publishedAt: match[3],
+      thumbnail: match[1]
+    });
+  }
+
+  return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
 // Readerラベル先頭から、URL slugと一致するタイトル部分だけを切り出す。
 function extractTtrTitleMatchingSlug(label, slug) {
   const words = cleanText(label).split(" ").filter(Boolean);
