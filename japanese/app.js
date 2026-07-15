@@ -1,8 +1,13 @@
 (function () {
   const definition = window.JapaneseHorseRacingPortalDefinition;
   const { CONFIG, I18N, SITE_ALL } = definition;
+  const {
+    dedupeByUrl,
+    mapWithConcurrency,
+    parseJapaneseDate
+  } = window.HorseRacingPortalCore;
 
-const state = {
+    const state = {
       allItems: [],
       errors: [],
       siteLatest: {},
@@ -99,6 +104,9 @@ const state = {
     }
 
     async function refreshAll() {
+      // 公開APIからの連打を含め、進行中の更新と新しい更新がキャッシュを書き合わないよう再入を防ぐ。
+      if (state.isLoading) return;
+
       state.isLoading = true;
       state.errors = [];
       state.siteLatest = {};
@@ -154,10 +162,20 @@ const state = {
       state.isLoading = false;
       elements.refreshButton.disabled = false;
       elements.refreshButton.textContent = t("refresh");
+      // render内の通常表示ステータスを先に確定させ、更新結果の詳細ステータスを最後に上書きする。
+      render();
 
       const visibleCount = getDateScopedItems().length;
-      if (visibleCount > 0) {
-        setStatus(t("completedStatus"), t("completedMessage", { days: state.activeDaysBack, count: visibleCount }));
+      if (failedSiteIds.size === CONFIG.SITES.length) {
+        setStatus(
+          t("failedStatus"),
+          state.allItems.length > 0 ? t("failedUsingCache") : t("failedNoItems")
+        );
+      } else if (visibleCount > 0) {
+        setStatus(
+          state.errors.length > 0 ? t("partialFailedStatus") : t("completedStatus"),
+          t("completedMessage", { days: state.activeDaysBack, count: visibleCount })
+        );
       } else if (merged.length > 0) {
         setStatus(t("noWindowStatus"), t("noWindowAfterFetch", { days: state.activeDaysBack }));
       } else if (state.allItems.length > 0) {
@@ -166,7 +184,6 @@ const state = {
         setStatus(t("failedStatus"), t("failedNoItems"));
       }
 
-      render();
     }
 
     function getPreservedItemsForFailedSites(previousItems, failedSiteIds) {
@@ -186,6 +203,16 @@ const state = {
     }
 
     async function fetchSite(site) {
+      // 東スポ競馬は通常一覧のHTML取得が公開CORSプロキシで不安定なため、専用の安定経路を使う。
+      // ニュースサイトマップを記事の正本とし、Reader一覧は見出し・日時・画像の補完に限定する。
+      if (site.id === "tospo" && site.sitemapUrl) {
+        return fetchTospoStructuredItems(site);
+      }
+      // サンスポは一覧HTMLではなく競馬専用Sitemapを記事URLの正本にし、詳細Readerから公式メタ情報を補う。
+      if (site.id === "sanspo" && site.sitemapUrl) {
+        return fetchSanspoStructuredItems(site);
+      }
+
       const html = await fetchText(site.url, site.accept);
       // RSS/AtomはHTMLとして解釈するとlink要素の属性やXML名前空間を失うため、媒体設定の文書型で解析する。
       const doc = new DOMParser().parseFromString(html, site.documentType || "text/html");
@@ -205,6 +232,238 @@ const state = {
       // 一覧側で「...」「…」付きの短い見出ししか出ない媒体は、記事ページのog:title/h1を少数だけ確認する。
       // 追加アクセスを増やしすぎるとプロキシ制限を受けやすいため、媒体ごとにtitleHydrationLimitで上限を置く。
       return hydrateTruncatedTitles(dedupeByUrl(items), site);
+    }
+
+    // 東スポ競馬のサイトマップと一覧カードを統合し、記事だけを返す。
+    // サイトマップに存在しない固定ページやランキングリンクは、一覧に出ていても採用しない。
+    async function fetchTospoStructuredItems(site) {
+      const sitemapText = await fetchReaderText(site.sitemapUrl, site.readerCacheBust);
+      const sitemapItems = extractTospoSitemapItems(sitemapText, site);
+      if (sitemapItems.length === 0) {
+        throw new Error(t("noExtract"));
+      }
+
+      // 一覧の片方が一時的に失敗しても、取得できたページのカードだけで更新を継続する。
+      // ただし両方とも失敗した場合は、日時を持たないReaderサイトマップだけでは表示できないため失敗扱いにする。
+      const listingResults = await Promise.allSettled(
+        site.readerListingUrls.map(async (url) => extractTospoReaderCards(await fetchReaderText(url, site.readerCacheBust), site))
+      );
+      const listingItems = listingResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      if (listingItems.length === 0) {
+        throw new Error(t("noExtract"));
+      }
+
+      const listingByUrl = new Map();
+      listingItems.forEach((item) => {
+        const key = canonicalArticleUrl(item.url);
+        if (key && !listingByUrl.has(key)) listingByUrl.set(key, item);
+      });
+
+      const mergedItems = sitemapItems.map((sitemapItem) => {
+        const listingItem = listingByUrl.get(canonicalArticleUrl(sitemapItem.url)) || {};
+        return {
+          title: sitemapItem.title || listingItem.title,
+          url: sitemapItem.url,
+          publishedAt: sitemapItem.publishedAt || listingItem.publishedAt,
+          thumbnail: listingItem.thumbnail || sitemapItem.thumbnail,
+          source: site.name
+        };
+      });
+
+      const normalizedItems = mergedItems
+        .map((item) => normalizeItem(item, site))
+        .filter(Boolean)
+        .filter((item) => /\/breaking_news\/\d+\/?$/i.test(new URL(item.url).pathname));
+
+      if (normalizedItems.length === 0) {
+        throw new Error(t("noExtract"));
+      }
+
+      return dedupeByUrl(normalizedItems);
+    }
+
+    // サンスポの競馬SitemapをURL許可リストとして読み、記事Readerで見出し・公開日時・写真を補完する。
+    // Sitemapのlastmodは本文修正でも更新されるため、公開日時には使わずPublished Timeだけを採用する。
+    async function fetchSanspoStructuredItems(site) {
+      let sitemapText = "";
+      try {
+        // XML構造を保つ公開CORSプロキシを先に試し、失敗時だけReaderのURL一覧へフォールバックする。
+        sitemapText = await fetchText(site.sitemapUrl, "application/xml,text/xml;q=0.9,*/*;q=0.8");
+      } catch (_error) {
+        sitemapText = await fetchReaderText(site.sitemapUrl, false);
+      }
+
+      const sitemapItems = extractSanspoSitemapItems(sitemapText, site)
+        .slice(0, site.detailHydrationLimit || 8);
+      if (sitemapItems.length === 0) throw new Error(t("noExtract"));
+
+      // 記事詳細への同時接続を少数に抑え、片方が失敗しても他の記事の補完結果は残す。
+      const hydratedItems = await mapWithConcurrency(
+        sitemapItems,
+        site.detailHydrationConcurrency || 2,
+        async (item) => {
+          try {
+            const detailText = await fetchReaderText(item.url, false);
+            const detail = extractSanspoReaderArticle(detailText, item.url);
+            return {
+              title: detail.title,
+              url: item.url,
+              publishedAt: detail.publishedAt,
+              thumbnail: detail.thumbnail,
+              source: site.name
+            };
+          } catch (_error) {
+            return null;
+          }
+        }
+      );
+
+      const normalizedItems = hydratedItems
+        .filter(Boolean)
+        .map((item) => normalizeItem(item, site))
+        .filter(Boolean)
+        .filter((item) => isSanspoKeibaArticleUrl(item.url));
+      if (normalizedItems.length === 0) throw new Error(t("noExtract"));
+      return dedupeByUrl(normalizedItems);
+    }
+
+    // サンスポSitemapの生XMLとReader化されたURL一覧を、日時を持たない記事候補へ変換する。
+    function extractSanspoSitemapItems(text, site) {
+      const doc = new DOMParser().parseFromString(text, "application/xml");
+      let urls = [];
+
+      if (!doc.querySelector("parsererror")) {
+        urls = [...doc.getElementsByTagNameNS("*", "url")]
+          .map((entry) => textByLocalName(entry, "loc"));
+      } else {
+        urls = [...String(text || "").matchAll(/https?:\/\/www\.sanspo\.com\/race\/article\/(?:general|basic)\/20\d{6}-[A-Z0-9]+\/?/gi)]
+          .map((match) => match[0]);
+      }
+
+      return [...new Set(urls)]
+        .filter(isSanspoKeibaArticleUrl)
+        .map((url) => ({ title: "", url, publishedAt: null, thumbnail: "", source: site.name }));
+    }
+
+    // 記事Readerのヘッダーから完全見出しと公開日時を、本文先頭からサンスポ配信の実写真だけを読む。
+    function extractSanspoReaderArticle(text, articleUrl) {
+      const raw = String(text || "");
+      const title = cleanTitle((raw.match(/^Title:\s*(.+)$/im) || [])[1]);
+      const publishedAt = parseDate((raw.match(/^Published Time:\s*(.+)$/im) || [])[1]);
+      const linkedImage = [...raw.matchAll(/\[!\[[^\]]*\]\((https?:\/\/www\.sanspo\.com\/resizer\/v2\/[^)]+)\)\]\((https?:\/\/www\.sanspo\.com\/race\/article\/[^)]+)\)/gi)]
+        .find((match) => canonicalArticleUrl(match[2]).startsWith(canonicalArticleUrl(articleUrl)));
+
+      return {
+        title,
+        publishedAt,
+        thumbnail: linkedImage ? linkedImage[1] : ""
+      };
+    }
+
+    // Jina Readerを直接呼び出す。公開CORSプロキシを二重に通さないため、Reader URLへ通常のfetchを行う。
+    async function fetchReaderText(url, cacheBust = false) {
+      // 東スポではReaderの通常キャッシュが原サイトより遅れるため、媒体設定で指定された場合だけ時刻クエリを付ける。
+      // サンスポ等の安定した記事URLへ不要なクエリを加えず、Readerキャッシュと配信元負荷を適切に利用する。
+      let freshUrl = url;
+      if (cacheBust) {
+        try {
+          const parsed = new URL(url);
+          parsed.searchParams.set("portal_refresh", String(Date.now()));
+          freshUrl = parsed.href;
+        } catch (_error) {
+          // 設定URLが壊れていても、元URLの取得を一度試して通常の通信エラーへ委ねる。
+        }
+      }
+      return fetchProxyText(CONFIG.TEXT_PROXY(freshUrl), CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
+    }
+
+    // Google News Sitemapの生XMLと、ReaderがMarkdown化したURL一覧の両方へ対応する。
+    // Reader経路では見出し・日時が失われるため空欄のまま返し、一覧カードとの完全URL一致で補完する。
+    function extractTospoSitemapItems(text, site) {
+      const doc = new DOMParser().parseFromString(text, "application/xml");
+      if (!doc.querySelector("parsererror")) {
+        return [...doc.getElementsByTagNameNS("*", "url")].map((entry) => ({
+          title: textByLocalName(entry, "title"),
+          url: textByLocalName(entry, "loc"),
+          publishedAt: parseDate(textByLocalName(entry, "publication_date")),
+          thumbnail: "",
+          source: site.name
+        })).filter((item) => isTospoBreakingNewsUrl(item.url));
+      }
+
+      const urls = [...String(text || "").matchAll(/\[[^\]]*\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)[^)]*\)/gi)]
+        .map((match) => match[1]);
+      return [...new Set(urls)].map((url) => ({
+        title: "",
+        url,
+        publishedAt: null,
+        thumbnail: "",
+        source: site.name
+      }));
+    }
+
+    // Reader一覧のカード行から、完全見出し・記事URL・記事画像と、そのカード直後にある日時を抽出する。
+    // origin+pathnameが同じ二つの記事リンクを持つ行だけをカードと認め、広告やランキング画像を除外する。
+    function extractTospoReaderCards(text, site) {
+      const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
+      const items = [];
+
+      lines.forEach((line, index) => {
+        const card = line.match(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)(?:!\[[^\]]*\]\([^)]+\))?\s*\[([^\]]+)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)/i);
+        if (!card || canonicalArticleUrl(card[2]) !== canonicalArticleUrl(card[4])) return;
+        if (!/\/images\/article\/thumbnail\//i.test(card[1])) return;
+
+        // Readerでは日時がカード行の後ろへ並ぶ。次の記事カードより前、かつ最大7行だけを探索することで、
+        // 隣の記事の日時を誤って流用することを防ぐ。
+        const nextCardOffset = lines
+          .slice(index + 1)
+          .findIndex((value) => /tospo-keiba\.jp\/breaking_news\/\d+/i.test(value));
+        const endIndex = nextCardOffset === -1 ? index + 8 : index + 1 + nextCardOffset;
+        const nearby = lines.slice(index + 1, Math.min(endIndex, index + 8));
+        const date = nearby.find((value) => /^20\d{2}\/\d{1,2}\/\d{1,2}$/.test(value));
+        const time = nearby.find((value) => /^\d{1,2}:\d{2}$/.test(value));
+        if (!date || !time) return;
+
+        items.push({
+          title: card[3],
+          url: card[4],
+          publishedAt: parseDate(`${date} ${time}`),
+          thumbnail: absoluteUrl(card[1], site.baseUrl),
+          source: site.name
+        });
+      });
+
+      return items;
+    }
+
+    function isTospoBreakingNewsUrl(value) {
+      try {
+        const parsed = new URL(value);
+        return parsed.origin === "https://tospo-keiba.jp" && /^\/breaking_news\/\d+\/?$/i.test(parsed.pathname);
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    // サンスポ競馬Sitemapで許可する一般記事・基本情報記事の正式URLだけを通す。
+    function isSanspoKeibaArticleUrl(value) {
+      try {
+        const parsed = new URL(value);
+        return parsed.origin === "https://www.sanspo.com" &&
+          /^\/race\/article\/(?:general|basic)\/20\d{6}-[A-Z0-9]+\/?$/i.test(parsed.pathname);
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    // 記事照合では解析クエリ・hash・末尾スラッシュを除き、origin+pathnameだけを正本にする。
+    function canonicalArticleUrl(value) {
+      try {
+        const parsed = new URL(value);
+        return `${parsed.origin}${parsed.pathname.replace(/\/+$/, "")}`;
+      } catch (_error) {
+        return "";
+      }
     }
 
     async function fetchText(url, accept) {
@@ -780,30 +1039,7 @@ const state = {
     }
 
     function parseDate(value) {
-      if (!value) return null;
-      const raw = String(value).trim();
-
-      const native = new Date(raw);
-      if (!Number.isNaN(native.getTime())) return native;
-
-      let match = raw.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2}):(\d{2})/);
-      if (match) return makeJstDate(match[1], match[2], match[3], match[4], match[5]);
-
-      match = raw.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s*(\d{1,2}):(\d{2})/);
-      if (match) return makeJstDate(match[1], match[2], match[3], match[4], match[5]);
-
-      match = raw.match(/(\d{1,2})月\s*(\d{1,2})日\s*(\d{1,2}):(\d{2})/);
-      if (match) {
-        const nowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
-        return makeJstDate(nowJst.getFullYear(), match[1], match[2], match[3], match[4]);
-      }
-
-      return null;
-    }
-
-    function makeJstDate(year, month, day, hour, minute) {
-      const utcMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 9, Number(minute));
-      return new Date(utcMs);
+      return parseJapaneseDate(value);
     }
 
     function isWithinWindow(item) {
@@ -818,18 +1054,6 @@ const state = {
       const now = new Date();
       const cutoff = now.getTime() - daysBack * 24 * 60 * 60 * 1000;
       return item.publishedAt.getTime() >= cutoff && item.publishedAt.getTime() <= now.getTime() + 60 * 60 * 1000;
-    }
-
-    function dedupeByUrl(items) {
-      const byUrl = new Map();
-      items.forEach((item) => {
-        const key = item.url.replace(/[?#].*$/, "");
-        const existing = byUrl.get(key);
-        if (!existing || item.publishedAt > existing.publishedAt) {
-          byUrl.set(key, item);
-        }
-      });
-      return [...byUrl.values()];
     }
 
     function cleanTitle(value) {

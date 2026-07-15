@@ -46,17 +46,24 @@
           id: "tospo",
           name: "東スポ競馬",
           url: "https://tospo-keiba.jp/news",
+          sitemapUrl: "https://tospo-keiba.jp/sitemap_news_1.xml",
+          readerListingUrls: [
+            "https://tospo-keiba.jp/news",
+            "https://tospo-keiba.jp/news?page=2"
+          ],
           baseUrl: "https://tospo-keiba.jp",
-          parser: "tospo"
+          parser: "tospo",
+          readerCacheBust: true
         },
         {
           id: "sanspo",
           name: "サンスポ",
           url: "https://www.sanspo.com/race/keiba/",
+          sitemapUrl: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
           baseUrl: "https://www.sanspo.com",
           parser: "generic",
-          hydrateTruncatedTitles: true,
-          titleHydrationLimit: 6
+          detailHydrationLimit: 8,
+          detailHydrationConcurrency: 2
         },
         {
           id: "sponichi",
