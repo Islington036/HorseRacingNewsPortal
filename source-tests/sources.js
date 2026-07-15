@@ -11,6 +11,20 @@ const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url="
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
   {
+    id: "trc_sales_previews_full_rss",
+    name: "Thoroughbred Racing / Sales Previews Full RSS",
+    url: thoroughbredRacingRss,
+    baseUrl: "https://www.thoroughbredracing.com",
+    parse: parseFeed,
+    rssCategory: "Sales Previews",
+    forceHttps: true,
+    tryDirect: true,
+    requireDate: true,
+    minimumItems: 1,
+    // 公式RSSには写真がないため、本体のダミー画像へ渡せることを正常条件にする。
+    minimumImageCoverage: 0
+  },
+  {
     id: "ttrausnz_next_data",
     name: "TTR AusNZ Next.js Data",
     url: "https://www.ttrausnz.com.au/",

@@ -174,10 +174,10 @@ export function parseFeed(text, source) {
 
     return {
       title: textOf(entry, "title"),
-      url: firstValue(
+      url: normalizeProtocol(firstValue(
         linkElement && linkElement.getAttribute("href"),
         linkElement && linkElement.textContent
-      ),
+      ), source),
       publishedAt: firstValue(
         textOf(entry, "pubDate"),
         textOf(entry, "published"),
@@ -187,6 +187,11 @@ export function parseFeed(text, source) {
       thumbnail
     };
   }).filter(Boolean);
+}
+
+// HTTPS対応済み媒体が古いRSS内だけhttpリンクを返す場合、同一記事の重複と混在コンテンツを防ぐ。
+function normalizeProtocol(value, source) {
+  return source.forceHttps ? String(value || "").replace(/^http:\/\//i, "https://") : value;
 }
 
 // rss2jsonのCORS対応JSONから、共有RSSの指定カテゴリだけを共通記事形式へ変換する。
