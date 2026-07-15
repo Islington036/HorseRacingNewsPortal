@@ -76,7 +76,9 @@ function renderMetrics(result) {
     ["日時", result.datedItems],
     ["画像URLあり", result.thumbnailItems],
     ["画像読込", result.loadedImages],
-    ["配信元画像なし", result.missingThumbnails]
+    ["配信元画像なし", result.missingThumbnails],
+    ["固定ページ混入", result.forbiddenUrlMatches],
+    ["新着順", result.chronologicalOrderValid ? "OK" : "NG"]
   ];
 
   elements.metrics.replaceChildren(...metrics.map(([label, value]) => {
