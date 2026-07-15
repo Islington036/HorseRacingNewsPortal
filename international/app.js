@@ -598,6 +598,9 @@ const state = {
       if (site.readerDecorationParser === "irishracing") {
         return extractIrishRacingMarkdownItems(text, site).filter((item) => isAllowedDecorationImage(item.thumbnail, site));
       }
+      if (site.readerDecorationParser === "drf") {
+        return extractDrfReaderDecorationItems(text, site);
+      }
 
       const items = [];
       for (const match of String(text || "").matchAll(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/[^)]+)\)/g)) {
@@ -606,6 +609,31 @@ const state = {
         if (!isCandidateArticleUrl(url, site) || !isAllowedDecorationImage(thumbnail, site)) continue;
         items.push({ url, thumbnail });
       }
+      return items;
+    }
+
+    // DRFのReader一覧は写真と見出しが別行なので、直前のStoryblok写真を次の記事URLへ結び付ける。
+    // 記事詳細のOG画像は共通ロゴになる場合があるため、一覧で確認できた写真以外は補完しない。
+    function extractDrfReaderDecorationItems(text, site) {
+      const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
+      const items = [];
+      let pendingImage = "";
+
+      lines.forEach((line) => {
+        const image = line.match(/^!\[[^\]]*\]\((https?:\/\/a-us\.storyblok\.com\/.+)\)$/i);
+        if (image) {
+          pendingImage = image[1];
+          return;
+        }
+
+        const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.drf\.com\/news\/(?!all-news(?:[?#/]|$))[^)]+)\)$/i);
+        if (!heading) return;
+        if (pendingImage && isAllowedDecorationImage(pendingImage, site)) {
+          items.push({ title: heading[1], url: heading[2], thumbnail: pendingImage });
+        }
+        pendingImage = "";
+      });
+
       return items;
     }
 
