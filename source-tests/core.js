@@ -724,7 +724,7 @@ export function parseTtrAusNzNextData(text) {
 
 // TTRのニュース一覧に常設される案内・索引ページをslugで除外する。
 function isTtrAusNzFixedPage(slug) {
-  return /^(?:job-board|wednesday-trivia|2026-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(String(slug || "")) ||
+  return /^(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(String(slug || "")) ||
     /^looking-ahead(?:-|$)/i.test(String(slug || ""));
 }
 
