@@ -329,7 +329,7 @@
             // 現在はRacing.comの公開APIヘッダーが対象で、今後ほかの媒体が追加されても同じ境界を維持する。
             const requestHeaders = proxyUrl === sourceUrl ? site.requestHeaders || {} : {};
             const html = await fetchProxyText(proxyUrl, requestHeaders, requestSite.requestTimeoutMs);
-            const items = site.id === "paulickreport"
+            const items = site.id === "paulickreport" && sourceUrl === site.url
               // Paulick Reportの一覧ページには日付が出ないため、記事詳細ページのメタ情報で公開日時を補完する。
               ? await parsePaulickReportResponse(html, site)
               : await parseSiteResponse(html, requestSite);
@@ -902,6 +902,8 @@
       if (["trc_racing", "trc_breeding_sales", "trc_sales_previews"].includes(site.id)) {
         return extractThoroughbredRacingRssJsonItems(data, site);
       }
+      // 本体がDataDomeで自動取得を拒否するPaulick Reportは、Bing News RSSの索引から元記事URLを復元する。
+      if (site.id === "paulickreport") return extractPaulickReportBingItems(data, site);
       if (site.id === "ttrausnz") return extractTtrAusNzItems(doc, site);
       // TDN、ANZ Bloodstock、The Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
       // TDNはRSSを予備経路として残しており、RSSレスポンス時はdataがnullになるため空配列を返す。
@@ -932,17 +934,57 @@
           return !site.rssCategory || categories.includes(site.rssCategory);
         })
         .map((item) => {
-          const rawDate = cleanWhitespace(item && item.pubDate);
-          const utcDate = rawDate.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
           return {
             title: item && item.title,
             url: String(item && item.link || "").replace(/^http:\/\/(www\.)?thoroughbredracing\.com/i, "https://www.thoroughbredracing.com"),
-            publishedAt: parseDate(utcDate ? `${utcDate[1]}T${utcDate[2]}Z` : rawDate),
+            publishedAt: parseRss2JsonUtcDate(item && item.pubDate),
             thumbnail: pickFirst(item && item.thumbnail, item && item.enclosure && item.enclosure.link),
             source: site.name
           };
         })
         .filter((item) => item.title && item.url && item.publishedAt && isCandidateArticleUrl(item.url, site));
+    }
+
+    // Bing Newsのサイト限定RSS JSONから、Paulick Reportの元記事だけを取り出す。
+    // BingクリックURLは表示リンクに使わず、urlクエリに格納された公式URLへ戻してから厳格に検証する。
+    function extractPaulickReportBingItems(data, site) {
+      if (!data) return [];
+      if (data.status !== "ok" || !Array.isArray(data.items)) {
+        throw new Error("Paulick Report RSS索引の応答を解析できませんでした");
+      }
+
+      return data.items
+        .map((item) => {
+          const url = unwrapBingNewsArticleUrl(item && item.link);
+          return {
+            title: item && item.title,
+            url,
+            publishedAt: parseRss2JsonUtcDate(item && item.pubDate),
+            // rss2jsonがNews:Imageを保持しない記事は、既存のダミー画像表示へ安全に委ねる。
+            thumbnail: pickFirst(item && item.thumbnail, item && item.enclosure && item.enclosure.link),
+            source: site.name
+          };
+        })
+        .filter((item) => item.title && item.publishedAt && isPaulickReportArticleUrl(item.url, site))
+        .sort((left, right) => right.publishedAt - left.publishedAt);
+    }
+
+    // Bing Newsのapiclick URLに埋め込まれた配信元URLをデコードする。
+    function unwrapBingNewsArticleUrl(value) {
+      try {
+        const url = new URL(String(value || ""));
+        if (!/(^|\.)bing\.com$/i.test(url.hostname)) return "";
+        return url.searchParams.get("url") || "";
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    // rss2jsonのタイムゾーンなし日時はUTCとして扱う。媒体ごとの重複実装を避ける共通変換器。
+    function parseRss2JsonUtcDate(value) {
+      const raw = cleanWhitespace(value);
+      const utcDate = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
+      return parseDate(utcDate ? `${utcDate[1]}T${utcDate[2]}Z` : raw);
     }
 
     // Racing PostのNext.js初期データから、記事カードと実写真URLを復元する。
