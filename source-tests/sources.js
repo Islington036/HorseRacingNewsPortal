@@ -1,4 +1,4 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js";
+import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260715-source-reliability";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -21,6 +21,7 @@ export const SOURCES = [
     textProxyOnly: true,
     requiredRoute: "text-proxy",
     timeoutMs: 20000,
+    maxItems: 18,
     requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
@@ -33,6 +34,7 @@ export const SOURCES = [
     url: "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent("https://www.bing.com/news/search?q=site%3Apaulickreport.com&format=rss"),
     baseUrl: "https://paulickreport.com",
     parse: parsePaulickBingRssJson,
+    maxItems: 18,
     tryDirect: true,
     requiredRoute: "direct",
     pathPrefixes: ["/news/"],
@@ -48,6 +50,7 @@ export const SOURCES = [
     url: "https://www.sportinglife.com/api/content/articles/summary?limit=13&offset=0&basketPath=sl%2Fracing",
     baseUrl: "https://www.sportinglife.com",
     parse: parseSportingLifeApi,
+    maxItems: 18,
     tryDirect: true,
     requiredRoute: "direct",
     pathPrefixes: ["/racing/news/"],
@@ -81,6 +84,7 @@ export const SOURCES = [
     textProxyOnly: true,
     requiredRoute: "text-proxy",
     timeoutMs: 20000,
+    maxItems: 18,
     forbiddenUrlPatterns: [
       /\/(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)\/?$/i,
       /\/looking-ahead(?:-|\/|$)/i
