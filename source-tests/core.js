@@ -674,6 +674,42 @@ export function parseRacingComGraphql(text) {
   }));
 }
 
+// Sporting Life公式サイトが利用する公開JSON APIを、ポータル共通の記事形式へ変換する。
+// URLはAPI内の記事IDとSEOタイトルから公式サイトと同じ規則で組み立て、一覧APIの画像を引き継ぐ。
+export function parseSportingLifeApi(text) {
+  const data = parseJsonPayload(text);
+  if (!Array.isArray(data)) {
+    throw new Error("Sporting Life APIの記事配列を解析できませんでした");
+  }
+
+  return data
+    .filter((article) => article && article.article_id && article.title && article.published_date)
+    .filter((article) => !article.category || article.category === "HORSE_RACING")
+    .map((article) => {
+      const slug = slugifySourceTestPath(article.seo_title || article.title);
+      const widgets = Array.isArray(article.widgets) ? article.widgets : [];
+      const imageCandidates = [];
+
+      // 代表画像はwidget.keys内のuri/thumbnailとして配信される。
+      // キー順を維持して候補へ積み、最初の有効値をカード画像として採用する。
+      widgets.forEach((widget) => {
+        const keys = Array.isArray(widget && widget.keys) ? widget.keys : [];
+        keys.forEach((entry) => {
+          if (entry && ["uri", "thumbnail"].includes(entry.key)) imageCandidates.push(entry.value);
+        });
+      });
+
+      return {
+        title: article.title,
+        url: slug ? `/racing/news/${slug}/${article.article_id}` : "",
+        publishedAt: article.published_date,
+        thumbnail: firstValue(...imageCandidates)
+      };
+    })
+    // APIの返却順に依存せず、専用テストでも本体と同じ新着順を検証できるようにする。
+    .sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+}
+
 // TTR AusNZのNext.js初期データから、エディション内の実ニュースだけを抽出する。
 // 広告型に加えてnormal型の固定ページslugも除外し、記事写真は各pageのcoverImageを優先する。
 export function parseTtrAusNzNextData(text) {
@@ -714,6 +750,16 @@ export function parseTtrAusNzNextData(text) {
 function isTtrAusNzFixedPage(slug) {
   return /^(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(String(slug || "")) ||
     /^looking-ahead(?:-|$)/i.test(String(slug || ""));
+}
+
+// APIが返す英文タイトルをSporting Lifeの記事パス形式へ正規化する。
+function slugifySourceTestPath(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 // Next.js JSONを循環なしで深さ優先走査し、記事配列を持つエディション候補を探す。
