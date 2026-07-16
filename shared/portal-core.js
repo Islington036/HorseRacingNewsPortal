@@ -135,6 +135,43 @@
     }
   }
 
+  // Jina ReaderのTitle行とMarkdown本文の全H1を返し、媒体側でより完全な見出しを比較できるようにする。
+  // Reader本文は記事H1より前にサイトロゴの空MarkdownリンクをH1として置く場合があるため、先頭だけに限定しない。
+  function extractReaderTitleCandidates(value) {
+    const text = String(value || "");
+    const candidates = [];
+    // 改行まで含む\sを使うと空Title行の次のURL Sourceを誤取得するため、行内空白だけを許す。
+    const titleMatch = text.match(/^Title:[ \t]*(.+)$/im);
+    const headingMatches = [...text.matchAll(/^#[ \t]+(.+)$/gm)]
+      .map((match) => match[1])
+      .filter((heading) => !/^\[\s*\]\([^)]+\)$/.test(String(heading || "").trim()));
+
+    [titleMatch && titleMatch[1], ...headingMatches].forEach((candidate) => {
+      const normalized = String(candidate || "").replace(/\s+/g, " ").trim();
+      if (normalized && !candidates.includes(normalized)) candidates.push(normalized);
+    });
+    return candidates;
+  }
+
+  // 記事ページtitleに付く媒体名だけを区切り記号ごと除去し、見出し本文中の同名語は維持する。
+  function stripTrailingSourceName(value, sourceNames) {
+    const text = String(value || "").trim();
+    const escapedNames = (Array.isArray(sourceNames) ? sourceNames : [])
+      .map((name) => String(name || "").trim())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)
+      .map(escapeRegExp);
+    if (escapedNames.length === 0) return text;
+
+    const suffixPattern = new RegExp(`\\s*[-|｜‐‑‒–—―]\\s*(?:${escapedNames.join("|")})\\s*$`, "i");
+    return text.replace(suffixPattern, "").trim();
+  }
+
+  // 媒体名に含まれるピリオドなどを正規表現の文字ではなく、文字列そのものとして比較できるようにする。
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
   // query/hashだけが異なる同一記事をまとめ、公開日時が新しい候補を残す。
   function dedupeByUrl(items) {
     const byUrl = new Map();
@@ -274,10 +311,12 @@
   return Object.freeze({
     createRequestRateLimiter,
     dedupeByUrl,
+    extractReaderTitleCandidates,
     finalizeStructuredSourceItems,
     isUrlHostname,
     mapWithConcurrency,
     parseJapaneseDate,
-    setUrlQueryParameter
+    setUrlQueryParameter,
+    stripTrailingSourceName
   });
 });

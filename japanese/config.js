@@ -6,6 +6,8 @@
       MAX_DAYS_BACK: 3,
       REQUEST_TIMEOUT_MS: 9000,
       TITLE_HYDRATION_TIMEOUT_MS: 20000,
+      // Reader共有列の予約待ちと代替経路を含む補完全体の上限。個々のHTTP要求は上の20秒で別に打ち切る。
+      TITLE_HYDRATION_DEADLINE_MS: 90000,
       // 国内版も東スポ・サンスポ・見出し補完でReaderを共有するため、公開枠を20回/分未満へ抑える。
       TEXT_PROXY_MIN_INTERVAL_MS: 3200,
       TEXT_PROXY_RETRY_LIMIT: 1,
