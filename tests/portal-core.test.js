@@ -4,11 +4,13 @@ const assert = require("node:assert/strict");
 const {
   createRequestRateLimiter,
   dedupeByUrl,
+  extractReaderTitleCandidates,
   finalizeStructuredSourceItems,
   isUrlHostname,
   mapWithConcurrency,
   parseJapaneseDate,
-  setUrlQueryParameter
+  setUrlQueryParameter,
+  stripTrailingSourceName
 } = require("../shared/portal-core.js");
 
 async function run() {
@@ -16,12 +18,14 @@ async function run() {
   testStructuredEmptyResult();
   testJapaneseDateParsing();
   testUrlUtilities();
+  testReaderTitleCandidates();
+  testTrailingSourceNameRemoval();
   await testConcurrencyLimit();
   await testConcurrentRateLimitedRuns();
   await testRequestRateLimiter();
   await testRateLimitExtensionDuringWait();
   await testRateLimitAbort();
-  console.log("portal-core: 9 tests passed");
+  console.log("portal-core: 11 tests passed");
 }
 
 // APIと完全RSSで同じ記事を返しても、最新日時を残して新着順・上限件数へ揃うことを確認する。
@@ -72,6 +76,53 @@ function testUrlUtilities() {
   assert.equal(updated.searchParams.get("portal_refresh"), "123");
   assert.equal(updated.hash, "#latest");
   assert.equal(setUrlQueryParameter("not a url", "portal_refresh", 123), "not a url");
+}
+
+// Reader本文ではTitle行とMarkdownのH1を候補に含め、同一見出しは一度だけ扱う。
+function testReaderTitleCandidates() {
+  const raw = [
+    "Title: 桜花賞の追い切り速報 - スポニチ競馬Web",
+    "",
+    "# [](http://keiba.sponichi.co.jp/)",
+    "",
+    "# 桜花賞の枠順が決定",
+    "",
+    "# 桜花賞の追い切り速報 - スポニチ競馬Web"
+  ].join("\n");
+
+  assert.deepEqual(extractReaderTitleCandidates(raw), [
+    "桜花賞の追い切り速報 - スポニチ競馬Web",
+    "桜花賞の枠順が決定"
+  ]);
+  assert.deepEqual(extractReaderTitleCandidates("Title: 同じ見出し\n# 同じ見出し"), ["同じ見出し"]);
+  assert.deepEqual(
+    extractReaderTitleCandidates("Title:\nURL Source: https://example.com/news\n# 完全な記事見出し"),
+    ["完全な記事見出し"]
+  );
+}
+
+// 既知媒体名だけを末尾区切りごと除去し、別媒体や本文中の同名文字列は維持する。
+function testTrailingSourceNameRemoval() {
+  const sourceNames = ["スポニチ競馬Web", "Sponichi Annex"];
+  ["-", "|", "｜", "―", "—"].forEach((separator) => {
+    assert.equal(
+      stripTrailingSourceName(`桜花賞の追い切り速報 ${separator} スポニチ競馬Web`, sourceNames),
+      "桜花賞の追い切り速報"
+    );
+  });
+
+  assert.equal(
+    stripTrailingSourceName("桜花賞の追い切り速報 - 別媒体", sourceNames),
+    "桜花賞の追い切り速報 - 別媒体"
+  );
+  assert.equal(
+    stripTrailingSourceName("スポニチ競馬Webが伝えた桜花賞の追い切り速報", sourceNames),
+    "スポニチ競馬Webが伝えた桜花賞の追い切り速報"
+  );
+  assert.equal(
+    stripTrailingSourceName("桜花賞の追い切り速報 - SANSPO.COM", ["SANSPO.COM"]),
+    "桜花賞の追い切り速報"
+  );
 }
 
 // サイト取得ワーカーが設定した同時実行数を超えないことを確認する。
