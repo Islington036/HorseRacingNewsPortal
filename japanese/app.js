@@ -4,11 +4,23 @@
   const {
     createRequestRateLimiter,
     dedupeByUrl,
+    extractReaderTitleCandidates,
     isUrlHostname,
     mapWithConcurrency,
     parseJapaneseDate,
-    setUrlQueryParameter
+    setUrlQueryParameter,
+    stripTrailingSourceName
   } = window.HorseRacingPortalCore;
+
+    const TITLE_SOURCE_NAMES = Object.freeze([
+      "スポーツ報知",
+      "日刊スポーツ",
+      "東スポ競馬",
+      "サンスポ",
+      "SANSPO.COM",
+      "スポニチ競馬Web",
+      "スポニチ"
+    ]);
 
     const state = {
       allItems: [],
@@ -506,11 +518,20 @@
         }
 
         try {
-          return await fetch(proxyUrl, {
+          const response = await fetch(proxyUrl, {
             credentials: "omit",
             signal: controller.signal,
             headers: { Accept: accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
           });
+          // 成功時は本文の読み切りまで同じAbortと個別タイマーの対象に含める。
+          // 429などの失敗応答は本文を待たず返し、rate limiterが直ちに後続要求を停止できるようにする。
+          const bodyText = response.ok ? await response.text() : "";
+          return {
+            bodyText,
+            headers: response.headers,
+            ok: response.ok,
+            status: response.status
+          };
         } finally {
           window.clearTimeout(timeoutId);
           if (externalSignal) {
@@ -527,7 +548,7 @@
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        return await response.text();
+        return response.bodyText;
       } catch (error) {
         if (error.name === "AbortError" || (externalSignal && externalSignal.aborted)) {
           throw new Error(t("timeout"));
@@ -802,45 +823,42 @@
 
       if (targets.length === 0) return items;
 
-      // 対象件数を増やしても記事ページへ一斉接続しないよう、媒体設定の同時実行数で補完する。
-      const hydratedPairs = await mapWithConcurrency(
-        targets,
-        site.titleHydrationConcurrency || 4,
-        async (item) => {
-          try {
-            // 記事ページ補完は補助処理なので、通常取得より短い上限時間で切り上げる。
-            // 1サイト内では並列に走らせ、見出し補完待ちで更新全体が長く止まらないようにする。
-            const articleHtml = await fetchTitleHydrationTextWithDeadline(item.url, CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
-            const fullTitle = extractFullTitleFromArticle(articleHtml, item.title);
-            return [item.url, preferFullTitle(item.title, fullTitle)];
-          } catch (_error) {
-            // 記事ページ側の取得に失敗しても、一覧の省略見出しで表示継続する。
-            // ここをエラー扱いにすると、ヘッドライン自体が取れているサイトまで失敗表示になってしまう。
-            return [item.url, item.title];
-          }
-        }
+      // 媒体内の全補完で一つの期限を共有する。記事ごとに期限を再開始すると、障害時に
+      // ワーカーの波数だけ更新が長引くため、未開始の後続記事も同じ時刻で打ち切る。
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(
+        () => controller.abort(),
+        CONFIG.TITLE_HYDRATION_DEADLINE_MS
       );
+      let hydratedPairs;
+      try {
+        // 対象件数を増やしても記事ページへ一斉接続しないよう、媒体設定の同時実行数で補完する。
+        hydratedPairs = await mapWithConcurrency(
+          targets,
+          site.titleHydrationConcurrency || 4,
+          async (item) => {
+            try {
+              // 全体期限は東スポ・サンスポなどが先に予約したReader開始枠を待つ猶予も兼ねる。
+              // 個々のHTTP要求は別の短い上限を持つため、通信不能な1経路だけで長時間停止しない。
+              const articleHtml = await fetchTitleHydrationText(item.url, controller.signal);
+              const fullTitle = extractFullTitleFromArticle(articleHtml, item.title);
+              return [item.url, preferFullTitle(item.title, fullTitle)];
+            } catch (_error) {
+              // 記事ページ側の取得に失敗しても、一覧の省略見出しで表示継続する。
+              // ここをエラー扱いにすると、ヘッドライン自体が取れているサイトまで失敗表示になってしまう。
+              return [item.url, item.title];
+            }
+          }
+        );
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
 
       const hydratedTitleByUrl = new Map(hydratedPairs);
       return items.map((item) => {
         const title = hydratedTitleByUrl.get(item.url);
         return title ? { ...item, title } : item;
       });
-    }
-
-    async function fetchTitleHydrationTextWithDeadline(url, timeoutMs) {
-      const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        return await fetchTitleHydrationText(url, controller.signal);
-      } catch (error) {
-        // 全体期限による中止は、個別プロキシの失敗と区別せず利用者向けのタイムアウトとして扱う。
-        if (controller.signal.aborted) throw new Error(t("timeout"));
-        throw error;
-      } finally {
-        window.clearTimeout(timeoutId);
-      }
     }
 
     async function fetchTitleHydrationText(url, signal) {
@@ -870,7 +888,7 @@
     function extractFullTitleFromArticle(html, fallbackTitle) {
       const doc = new DOMParser().parseFromString(html, "text/html");
       const candidates = [
-        extractReaderTitleCandidate(html),
+        ...extractReaderTitleCandidates(html),
         doc.querySelector("meta[property='og:title']") && doc.querySelector("meta[property='og:title']").getAttribute("content"),
         doc.querySelector("meta[name='twitter:title']") && doc.querySelector("meta[name='twitter:title']").getAttribute("content"),
         doc.querySelector("h1") && doc.querySelector("h1").textContent,
@@ -887,29 +905,19 @@
         });
       });
 
+      // 先頭候補が一覧と同じ省略見出しでも比較を打ち切らず、後続のH1やJSON-LDまで順に評価する。
       return candidates
         .map((candidate) => cleanArticleTitle(candidate))
-        .find((candidate) => preferFullTitle(fallbackTitle, candidate) === candidate) || "";
-    }
-
-    function extractReaderTitleCandidate(value) {
-      // Jina ReaderはHTMLではなくMarkdown風テキストを返すため、DOMParserだけでは見出し候補を拾えない。
-      // 先頭のTitle行を最優先し、無い場合は本文冒頭のMarkdown見出しを補完候補にする。
-      const text = String(value || "");
-      const titleMatch = text.match(/^Title:\s*(.+)$/im);
-      if (titleMatch) return titleMatch[1];
-
-      const headingMatch = text.match(/^#\s+(.+)$/m);
-      return headingMatch ? headingMatch[1] : "";
+        .reduce((best, candidate) => preferFullTitle(best, candidate), cleanArticleTitle(fallbackTitle));
     }
 
     function cleanArticleTitle(value) {
-      return cleanTitle(value)
+      const normalized = cleanTitle(value)
         // 日刊スポーツの記事ページtitleは「- 共通 | 競馬 : 日刊スポーツ」のようにカテゴリ名が入る場合がある。
         // カテゴリ名は媒体側のページタイトル用メタ情報なので、ポータルの見出しからは除去する。
         .replace(/\s*-\s*(?:[^|]{1,16}\s*\|\s*)?競馬\s*:\s*日刊スポーツ\s*$/i, "")
-        .replace(/\s*[|-]\s*(スポーツ報知|日刊スポーツ|東スポ競馬|サンスポ|SANSPO\.COM|スポニチ競馬Web|スポニチ)\s*$/i, "")
         .trim();
+      return stripTrailingSourceName(normalized, TITLE_SOURCE_NAMES);
     }
 
     function isTruncatedTitle(title) {
