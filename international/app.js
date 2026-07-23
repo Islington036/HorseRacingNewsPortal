@@ -8,6 +8,10 @@
     isUrlHostname,
     mapWithConcurrency
   } = window.HorseRacingPortalCore;
+  const {
+    extractRacenetReaderCards,
+    pickRacenetReaderTitle
+  } = window.InternationalHorseRacingSourceParsers;
 
     const state = {
       allItems: [],
@@ -1416,20 +1420,18 @@
       if (!text) return [];
 
       const items = [];
-      const cardPattern = /\[!\[[^\]]*?(?::\s*([^\]]+))?\]\((https?:\/\/[^)]+)\)\s*([^\[\]]{20,900}?)\]\((https?:\/\/www\.racenet\.com\.au\/news\/[^)]+)\)/g;
-
-      for (const match of String(text).matchAll(cardPattern)) {
-        const url = match[4];
-        const body = cleanWhitespace(match[3]);
+      for (const card of extractRacenetReaderCards(text)) {
+        const url = card.url;
+        const body = card.body;
         const publishedAt = parseDateFromText(body) || parseDateFromUrl(url);
-        const title = pickRacenetTitle(body, url);
+        const title = cleanTitle(pickRacenetReaderTitle(body, url));
         if (!title || !publishedAt || !isCandidateArticleUrl(url, site)) continue;
 
         items.push({
           title,
           url,
           publishedAt,
-          thumbnail: match[2],
+          thumbnail: card.thumbnail,
           source: site.name
         });
       }
@@ -1546,16 +1548,6 @@
         .replace(/[^a-z0-9,\s-]+/g, "")
         .replace(/[\s-]+/g, "-")
         .replace(/^-+|-+$/g, "");
-    }
-
-    // Racenetカード本文とURLスラッグを照合し、長い説明文を見出しに混ぜないようにする。
-    function pickRacenetTitle(body, url) {
-      const fromSlug = titleFromUrlSlug(url, /-\d{8}$/);
-      if (!fromSlug) return cleanTitle(body);
-      const bodyPrefix = cleanWhitespace(body).slice(0, 180).toLowerCase();
-      const slugWords = fromSlug.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
-      const matchedWords = slugWords.filter((word) => bodyPrefix.includes(word)).length;
-      return matchedWords >= Math.min(4, slugWords.length) ? fromSlug : cleanTitle(body);
     }
 
     // Racing.com公式GraphQLのJSONから、見出し・日時・実写真URLを安定して取り出す。

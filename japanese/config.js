@@ -79,7 +79,9 @@
           // 一覧は多くの記事を「...」で省略するため、表示上限相当まで詳細タイトルを補完する。
           // 同時接続は4件に抑え、記事ページと公開プロキシへ過剰な負荷を掛けない。
           titleHydrationLimit: 18,
-          titleHydrationConcurrency: 4
+          titleHydrationConcurrency: 4,
+          // Reader共有列の開始間隔と1回のRetry-Afterを吸収し、後ろの補完候補まで到達できる時間を確保する。
+          titleHydrationDeadlineMs: 180000
         }
       ]
     };
