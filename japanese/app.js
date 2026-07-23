@@ -166,12 +166,15 @@
         }
       });
 
+      // 媒体取得が成功しても個別の見出し補完だけ失敗することがある。
+      // 同じURLの前回キャッシュが完全見出しなら、省略形で上書きせず表示品質を維持する。
+      const fetchedItemsWithStableTitles = preserveCompleteCachedTitles(fetchedItems, previousItems);
       const preservedFailedItems = getPreservedItemsForFailedSites(previousItems, failedSiteIds);
-      const merged = dedupeByUrl([...fetchedItems, ...preservedFailedItems])
+      const merged = dedupeByUrl([...fetchedItemsWithStableTitles, ...preservedFailedItems])
         .filter(isWithinMaxWindow)
         .sort((a, b) => b.publishedAt - a.publishedAt);
 
-      if (fetchedItems.length > 0 && merged.length > 0) {
+      if (fetchedItemsWithStableTitles.length > 0 && merged.length > 0) {
         state.allItems = merged;
         markItemsForAnimation(merged, previousItemIds);
         state.lastUpdatedAt = new Date();
@@ -214,6 +217,25 @@
       // 部分失敗時に失敗媒体の記事だけ消えると、ユーザーには「記事がなくなった」ように見える。
       // そのため、成功媒体は新データへ差し替えつつ、失敗媒体だけ前回取得分を混ぜて一覧の連続性を保つ。
       return previousItems.filter((item) => failedSiteIds.has(item.sourceId));
+    }
+
+    function preserveCompleteCachedTitles(fetchedItems, previousItems) {
+      const cachedTitleByUrl = new Map();
+      previousItems.forEach((item) => {
+        const key = articleCacheKey(item && item.url);
+        if (key && item.title) cachedTitleByUrl.set(key, item.title);
+      });
+
+      return fetchedItems.map((item) => {
+        const cachedTitle = cachedTitleByUrl.get(articleCacheKey(item && item.url));
+        if (!cachedTitle) return item;
+        const title = preferFullTitle(item.title, cachedTitle);
+        return title === item.title ? item : { ...item, title };
+      });
+    }
+
+    function articleCacheKey(value) {
+      return String(value || "").replace(/[?#].*$/, "").toLowerCase();
     }
 
     function markItemsForAnimation(items, previousItemIds) {
@@ -826,10 +848,8 @@
       // 媒体内の全補完で一つの期限を共有する。記事ごとに期限を再開始すると、障害時に
       // ワーカーの波数だけ更新が長引くため、未開始の後続記事も同じ時刻で打ち切る。
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(
-        () => controller.abort(),
-        CONFIG.TITLE_HYDRATION_DEADLINE_MS
-      );
+      const deadlineMs = site.titleHydrationDeadlineMs || CONFIG.TITLE_HYDRATION_DEADLINE_MS;
+      const timeoutId = window.setTimeout(() => controller.abort(), deadlineMs);
       let hydratedPairs;
       try {
         // 対象件数を増やしても記事ページへ一斉接続しないよう、媒体設定の同時実行数で補完する。
