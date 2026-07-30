@@ -290,7 +290,7 @@
       // 一覧の片方が一時的に失敗しても、取得できたページのカードだけで更新を継続する。
       // ただし両方とも失敗した場合は、日時を持たないReaderサイトマップだけでは表示できないため失敗扱いにする。
       const listingResults = await Promise.allSettled(
-        site.readerListingUrls.map(async (url) => extractTospoReaderCards(await fetchReaderText(url, site.readerCacheBust), site))
+        site.readerListingUrls.map((url) => fetchTospoReaderListingItems(url, site))
       );
       const listingItems = listingResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
       if (listingItems.length === 0) {
@@ -324,6 +324,28 @@
       }
 
       return dedupeByUrl(normalizedItems);
+    }
+
+    // 東スポ一覧の最新Readerが一時失敗・抽出0件になった場合だけ、通常キャッシュ済みReaderへ退避する。
+    // Sitemapの最新URL集合は維持し、cached Readerは一致URLの見出し・日時・画像補完だけに使用する。
+    async function fetchTospoReaderListingItems(url, site) {
+      const cacheBustModes = site.readerCacheBust && site.readerCacheFallback
+        ? [true, false]
+        : [Boolean(site.readerCacheBust)];
+      let lastError = null;
+
+      for (const cacheBust of cacheBustModes) {
+        try {
+          const items = extractTospoReaderCards(await fetchReaderText(url, cacheBust), site);
+          if (items.length > 0) return items;
+          // HTTP 200でもReader本文が空・構造変化中なら、次のcached Readerを試す。
+          lastError = new Error(t("noExtract"));
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError || new Error(t("noExtract"));
     }
 
     // サンスポの競馬SitemapをURL許可リストとして読み、記事Readerで見出し・公開日時・写真を補完する。
