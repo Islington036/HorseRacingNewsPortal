@@ -58,7 +58,9 @@
             "https://tospo-keiba.jp/news?page=2"
           ],
           baseUrl: "https://tospo-keiba.jp",
-          readerCacheBust: true
+          readerCacheBust: true,
+          // 最新Readerの一時失敗・抽出0件時だけ、通常キャッシュ済みReaderへ一度退避する。
+          readerCacheFallback: true
         },
         {
           id: "sanspo",

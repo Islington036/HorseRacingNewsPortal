@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20260715-fetch-common";
-import { SOURCES } from "./sources.js?v=20260715-fetch-common";
+import { runSourceTest } from "./core.js?v=20260731-tospo-fallback";
+import { SOURCES } from "./sources.js?v=20260731-tospo-fallback";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),

@@ -154,11 +154,20 @@ async function fetchText(url, options = {}) {
     );
 
     try {
-      return await fetch(url, {
+      const response = await fetch(url, {
         signal: controller.signal,
         credentials: "omit",
         headers: options.headers || {}
       });
+      // 成功応答は本文読了まで同じタイマーで監視し、停止時に次のReader経路へ進める。
+      // 429などの非成功応答は本文を待たず、共有rate limiterへ直ちに返す。
+      const bodyText = response.ok ? await response.text() : "";
+      return {
+        bodyText,
+        headers: response.headers,
+        ok: response.ok,
+        status: response.status
+      };
     } finally {
       window.clearTimeout(timeoutId);
     }
@@ -169,7 +178,7 @@ async function fetchText(url, options = {}) {
       ? await textProxyRateLimiter.run(requestOnce)
       : await requestOnce();
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.text();
+    return response.bodyText;
   } catch (error) {
     if (error.name === "AbortError") throw new Error("取得がタイムアウトしました");
     throw error;
@@ -362,9 +371,9 @@ async function decorateItemsFromReader(items, source) {
 
   for (const listingUrl of source.readerDecorationUrls) {
     try {
-      const text = await fetchText(buildTextProxyUrl(listingUrl, source), { timeoutMs: source.hydrationTimeoutMs });
       if (typeof source.parseReaderDecoration === "function") {
-        source.parseReaderDecoration(text).forEach((item) => {
+        const decorationItems = await fetchParsedReaderDecorationItems(listingUrl, source);
+        decorationItems.forEach((item) => {
           if (!isAllowedDecorationImage(item.thumbnail, source)) return;
           const key = canonicalArticleUrl(item.url, source);
           if (key && !decorationByUrl.has(key)) decorationByUrl.set(key, item);
@@ -372,6 +381,7 @@ async function decorateItemsFromReader(items, source) {
         continue;
       }
 
+      const text = await fetchText(buildTextProxyUrl(listingUrl, source), { timeoutMs: source.hydrationTimeoutMs });
       for (const match of String(text || "").matchAll(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/[^)]+)\)/g)) {
         const image = unwrapImageProxyUrl(match[1]);
         const key = canonicalArticleUrl(match[2], source);
@@ -393,6 +403,29 @@ async function decorateItemsFromReader(items, source) {
       thumbnail: item.thumbnail || decoration.thumbnail || ""
     };
   });
+}
+
+// 媒体専用の一覧パーサーでは、最新Readerが一時失敗・抽出0件なら通常キャッシュを一度だけ試す。
+// 東スポ本体と同じ退避順にして、単媒体テスターだけ取得経路が乖離しないようにする。
+async function fetchParsedReaderDecorationItems(listingUrl, source) {
+  const cacheBustModes = source.readerCacheBust && source.readerCacheFallback
+    ? [true, false]
+    : [Boolean(source.readerCacheBust)];
+  let lastError = null;
+
+  for (const cacheBust of cacheBustModes) {
+    try {
+      const proxyUrl = buildTextProxyUrl(listingUrl, { ...source, readerCacheBust: cacheBust });
+      const text = await fetchText(proxyUrl, { timeoutMs: source.hydrationTimeoutMs });
+      const items = source.parseReaderDecoration(text);
+      if (items.length > 0) return items;
+      lastError = new Error("Reader一覧から記事カードを抽出できませんでした");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Reader一覧を取得できませんでした");
 }
 
 // Readerのキャッシュ遅延が確認された媒体だけ、取得元URLへ時刻クエリを付けて最新レスポンスを要求する。
