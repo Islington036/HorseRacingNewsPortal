@@ -9,6 +9,7 @@ const {
   isUrlHostname,
   mapWithConcurrency,
   parseJapaneseDate,
+  preferNonTerminalTitleCandidate,
   setUrlQueryParameter,
   stripTrailingSourceName
 } = require("../shared/portal-core.js");
@@ -19,13 +20,14 @@ async function run() {
   testJapaneseDateParsing();
   testUrlUtilities();
   testReaderTitleCandidates();
+  testNonTerminalTitlePreference();
   testTrailingSourceNameRemoval();
   await testConcurrencyLimit();
   await testConcurrentRateLimitedRuns();
   await testRequestRateLimiter();
   await testRateLimitExtensionDuringWait();
   await testRateLimitAbort();
-  console.log("portal-core: 11 tests passed");
+  console.log("portal-core: 12 tests passed");
 }
 
 // APIと完全RSSで同じ記事を返しても、最新日時を残して新着順・上限件数へ揃うことを確認する。
@@ -98,6 +100,19 @@ function testReaderTitleCandidates() {
   assert.deepEqual(
     extractReaderTitleCandidates("Title:\nURL Source: https://example.com/news\n# 完全な記事見出し"),
     ["完全な記事見出し"]
+  );
+}
+
+// 一覧末尾の省略を解消する完全見出しだけを採用し、短い候補や省略候補への誤置換を防ぐ。
+function testNonTerminalTitlePreference() {
+  const current = "【レパードS】稽古には合格点も…胸を借りるつも...";
+  const complete = "【レパードS】稽古には合格点も…胸を借りるつもり」";
+  assert.equal(preferNonTerminalTitleCandidate(current, complete), complete);
+  assert.equal(preferNonTerminalTitleCandidate(current, "別の短い候補"), current);
+  assert.equal(preferNonTerminalTitleCandidate(current, "同じく省略された候補..."), current);
+  assert.equal(
+    preferNonTerminalTitleCandidate("稽古には合格点も…手塚師は前向き", complete),
+    "稽古には合格点も…手塚師は前向き"
   );
 }
 
