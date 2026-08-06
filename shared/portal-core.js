@@ -153,6 +153,19 @@
     return candidates;
   }
 
+  // 末尾の省略記号が解消され、本文中の三点リーダーだけが残る完全見出し候補を優先する。
+  // 候補が短い場合や候補側も末尾省略のままなら、一覧見出しを維持して誤置換を防ぐ。
+  function preferNonTerminalTitleCandidate(currentTitle, candidateTitle) {
+    const current = String(currentTitle || "").trim();
+    const candidate = String(candidateTitle || "").trim();
+    const terminalMarkPattern = /(?:\.{3}|…|‥)\s*$/;
+    if (!terminalMarkPattern.test(current) || terminalMarkPattern.test(candidate)) return current;
+
+    const currentComparable = current.replace(terminalMarkPattern, "").replace(/…|\.{3}|‥/g, "");
+    const candidateComparable = candidate.replace(/…|\.{3}|‥/g, "");
+    return candidateComparable.length >= currentComparable.length ? candidate : current;
+  }
+
   // 記事ページtitleに付く媒体名だけを区切り記号ごと除去し、見出し本文中の同名語は維持する。
   function stripTrailingSourceName(value, sourceNames) {
     const text = String(value || "").trim();
@@ -316,6 +329,7 @@
     isUrlHostname,
     mapWithConcurrency,
     parseJapaneseDate,
+    preferNonTerminalTitleCandidate,
     setUrlQueryParameter,
     stripTrailingSourceName
   });

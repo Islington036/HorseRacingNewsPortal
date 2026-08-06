@@ -8,6 +8,7 @@
     isUrlHostname,
     mapWithConcurrency,
     parseJapaneseDate,
+    preferNonTerminalTitleCandidate,
     setUrlQueryParameter,
     stripTrailingSourceName
   } = window.HorseRacingPortalCore;
@@ -972,6 +973,11 @@
       const current = cleanTitle(currentTitle);
       const candidate = cleanArticleTitle(candidateTitle);
       if (!candidate || !isLikelyHeadline(candidate)) return current;
+
+      // 一覧末尾の「...」だけが省略を示し、記事側の正式見出しには会話表現の「…」が残る場合がある。
+      // 記号をすべて同じ省略扱いにすると正式見出しの方が短く見えるため、末尾省略が解消した候補を先に採用する。
+      const nonTerminalCandidate = preferNonTerminalTitleCandidate(current, candidate);
+      if (nonTerminalCandidate !== current) return nonTerminalCandidate;
 
       // 省略記号が残る候補でも、記事ページ側の正式見出しに会話文として「…」が入る場合がある。
       // 一覧より明らかに長い場合は記事ページ候補を採用し、同程度なら一覧の省略見出しとみなして戻す。
