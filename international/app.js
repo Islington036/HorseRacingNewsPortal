@@ -2532,7 +2532,8 @@
 
     // 見出し末尾の媒体名や不要な導入語を除去する。
     function cleanTitle(value) {
-      return cleanWhitespace(value)
+      // ReaderやRSSが返す&#63;などの文字参照を先に戻し、画面へ符号のまま残さない。
+      return cleanWhitespace(decodeHtmlEntities(value))
         // Markdownの空リンクだけが見出しとして残った場合は、タイトル扱いせず空文字へ落とす。
         .replace(/^\[\]\(https?:\/\/[^)]+\)$/i, "")
         // Markdownリンク全体がタイトル欄に入った場合は、表示用の文字列だけを残す。
