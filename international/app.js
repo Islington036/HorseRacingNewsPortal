@@ -2532,8 +2532,8 @@
 
     // 見出し末尾の媒体名や不要な導入語を除去する。
     function cleanTitle(value) {
-      // ReaderやRSSが返す&#63;などの文字参照を先に戻し、画面へ符号のまま残さない。
-      return cleanWhitespace(decodeHtmlEntities(value))
+      // ReaderやRSSの文字参照を戻し、WordPress見出しに混ざる装飾HTMLも表示文字列から除く。
+      return cleanWhitespace(extractHeadlineText(value))
         // Markdownの空リンクだけが見出しとして残った場合は、タイトル扱いせず空文字へ落とす。
         .replace(/^\[\]\(https?:\/\/[^)]+\)$/i, "")
         // Markdownリンク全体がタイトル欄に入った場合は、表示用の文字列だけを残す。
@@ -2543,6 +2543,14 @@
         .replace(/^(Read more|Premium|Exclusive)\s*:?\s*/i, "")
         .replace(/\s*(Read more|View article|Full story)\s*$/i, "")
         .trim();
+    }
+
+    // 不活性なtemplate内だけで見出しHTMLを解釈し、装飾要素を除いたプレーンテキストを返す。
+    function extractHeadlineText(value) {
+      const template = document.createElement("template");
+      template.innerHTML = String(value || "");
+      template.content.querySelectorAll("script, style, .sponsor-badge").forEach((element) => element.remove());
+      return template.content.textContent || "";
     }
 
     // 改行や連続空白を1つの半角スペースに整える。
