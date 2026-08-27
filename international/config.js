@@ -34,6 +34,13 @@
       "https://www.bing.com/news/search?q=site%3Apaulickreport.com&format=rss";
     const PAULICK_REPORT_BING_RSS_API =
       "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(PAULICK_REPORT_BING_RSS);
+    // Mirrorの公式RSSも公開CORSを許可しないため、既存採用済みのrss2jsonを第一経路にする。
+    const MIRROR_RACING_RSS = "https://www.mirror.co.uk/sport/horse-racing/?service=rss";
+    const MIRROR_RACING_RSS_API =
+      "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(MIRROR_RACING_RSS);
+    const SCMP_RACING_RSS = "https://www.scmp.com/rss/39/feed/";
+    const SCMP_RACING_RSS_API =
+      "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(SCMP_RACING_RSS);
 
     // ===== カスタマイズ用設定 =====
     const CONFIG = {
@@ -87,7 +94,7 @@
         { id: "racingtv", name: "Racing TV", region: "europe", url: "https://www.racingtv.com/news/latest", baseUrl: "https://www.racingtv.com", parser: "generic", pathHints: ["/news"], preferTextProxy: true, textProxyOnly: true, maxItems: 8, requestTimeoutMs: 30000 },
         { id: "irishracing", name: "Irish Racing", region: "europe", url: "https://www.irishracing.com/news", sitemapUrl: "https://www.irishracing.com/newssitemap.xml", readerDecorationUrls: ["https://www.irishracing.com/news"], readerDecorationParser: "irishracing", readerDecorationImagePattern: /\/photo_jpeg\//i, readerDecorationImageOrigins: ["https://www.irishracing.com"], baseUrl: "https://www.irishracing.com", parser: "generic", pathPrefixes: ["/news/"], pathHints: ["/news"], caseInsensitivePath: true, matchByTrailingNumericId: true, preferTextProxy: true },
         { id: "dailymail_racing", name: "Daily Mail Racing", region: "europe", url: "https://www.dailymail.com/sport/racing/index.html", feedUrl: "https://www.dailymail.com/sport/racing/index.rss", baseUrl: "https://www.dailymail.com", parser: "generic", pathHints: ["/sport/racing/article-"], allowedHosts: ["dailymail.co.uk"], preferTextProxy: true, tryDirect: true },
-        { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", feedUrl: "https://www.mirror.co.uk/sport/horse-racing/?service=rss", baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], preferTextProxy: true },
+        { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", apiUrl: MIRROR_RACING_RSS_API, baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], preferTextProxy: true, tryDirect: true, rss2Json: true, exclusiveStructuredJson: true },
         // Sporting Life自身のWeb画面が利用する公開JSON APIを直接読む。
         // CORS許可済みの構造化データなので、Cookie同意画面や公開プロキシの遅延を避けられる。
         { id: "sportinglife_features", name: "Sporting Life Racing", region: "europe", url: "https://www.sportinglife.com/racing/features", apiUrl: "https://www.sportinglife.com/api/content/articles/summary?limit=13&offset=0&basketPath=sl%2Fracing", baseUrl: "https://www.sportinglife.com", parser: "generic", pathHints: ["/racing/news/", "/racing/features/"], tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true },
@@ -112,7 +119,7 @@
         // Readerは画像・完全見出し・日時を安定して返す一方、後続の公開CORSプロキシは長時間失敗する。
         // textProxyOnlyで既知の失敗経路を除き、更新全体がタイムアウト待ちになることを防ぐ。
         { id: "loveracing_nz", name: "LOVERACING.NZ", region: "new-zealand", url: "https://loveracing.nz/news/articles/racing", baseUrl: "https://loveracing.nz", parser: "generic", pathPrefixes: ["/news/"], pathHints: ["/news/"], excludePathHints: ["/news/articles/", "/news/videos/", "/news/photos/"], preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000 },
-        { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", feedUrl: "https://www.scmp.com/rss/39/feed/", baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true }
+        { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", apiUrl: SCMP_RACING_RSS_API, baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true, tryDirect: true, rss2Json: true, exclusiveStructuredJson: true }
       ]
     };
 

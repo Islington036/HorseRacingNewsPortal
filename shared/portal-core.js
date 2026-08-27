@@ -223,6 +223,27 @@
     return { hasResult: false, items: [] };
   }
 
+  // rss2jsonのCORS対応レスポンスを、国内版・海外版・媒体テスターで共通の記事形式へ変換する。
+  // API固有のタイムゾーンなし日時はUTCとして明示し、一覧用thumbnailがなければenclosure画像へ補完する。
+  function parseRss2JsonItems(value) {
+    const data = typeof value === "string" ? JSON.parse(value) : value;
+    if (!data || data.status !== "ok" || !Array.isArray(data.items)) {
+      throw new Error("RSS JSONを解析できませんでした");
+    }
+
+    return data.items.map((item) => {
+      const rawDate = String(item && item.pubDate || "").trim();
+      const utcDate = rawDate.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
+      return {
+        title: item && item.title,
+        url: item && item.link,
+        publishedAt: utcDate ? `${utcDate[1]}T${utcDate[2]}Z` : rawDate,
+        thumbnail: item && item.thumbnail || item && item.enclosure && item.enclosure.link || "",
+        categories: Array.isArray(item && item.categories) ? item.categories : []
+      };
+    });
+  }
+
   // 国内媒体のタイムゾーンなし日時を、閲覧者の地域に依存させずJSTとして解釈する。
   // ISO 8601などタイムゾーンを含む形式だけ、最後にブラウザ標準パーサーへ委ねる。
   function parseJapaneseDate(value, now = new Date()) {
@@ -328,6 +349,7 @@
     finalizeStructuredSourceItems,
     isUrlHostname,
     mapWithConcurrency,
+    parseRss2JsonItems,
     parseJapaneseDate,
     preferNonTerminalTitleCandidate,
     setUrlQueryParameter,

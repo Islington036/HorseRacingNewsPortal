@@ -6,7 +6,8 @@
     dedupeByUrl,
     finalizeStructuredSourceItems,
     isUrlHostname,
-    mapWithConcurrency
+    mapWithConcurrency,
+    parseRss2JsonItems
   } = window.HorseRacingPortalCore;
   const {
     extractRacenetReaderCards,
@@ -791,6 +792,8 @@
       }
       // 本体がDataDomeで自動取得を拒否するPaulick Reportは、Bing News RSSの索引から元記事URLを復元する。
       if (site.id === "paulickreport") return extractPaulickReportBingItems(data, site);
+      // Mirror・SCMPの公式RSSをCORS対応JSONへ変換した結果は、元記事ホストを後段の共通検証で絞る。
+      if (site.rss2Json) return extractGenericRss2JsonItems(data, site);
       if (site.id === "ttrausnz") return extractTtrAusNzMarkdownItems(rawText, site);
       // TDN、ANZ Bloodstock、The Straightは同じWordPress REST形式なので、共通抽出器へまとめる。
       // TDNはRSSを予備経路として残しており、RSSレスポンス時はdataがnullになるため空配列を返す。
@@ -802,6 +805,14 @@
       if (site.id === "racing_com") return [...extractRacingComGraphqlItems(data, site), ...extractRacingComMarkdownItems(rawText, site)];
       if (site.id === "racenet") return extractRacenetMarkdownItems(rawText, site);
       return [];
+    }
+
+    // 共通rss2json変換器の結果を海外版の生記事形式へ揃え、サイト固有URL判定へ渡す。
+    function extractGenericRss2JsonItems(data, site) {
+      if (!data) return [];
+      return parseRss2JsonItems(data)
+        .map((item) => ({ ...item, publishedAt: parseDate(item.publishedAt), source: site.name }))
+        .filter((item) => item.title && item.publishedAt && isCandidateArticleUrl(item.url, site));
     }
 
     // rss2jsonのCORS対応レスポンスから、指定された公式RSSカテゴリの記事だけを抽出する。

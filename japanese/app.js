@@ -7,11 +7,13 @@
     extractReaderTitleCandidates,
     isUrlHostname,
     mapWithConcurrency,
+    parseRss2JsonItems,
     parseJapaneseDate,
     preferNonTerminalTitleCandidate,
     setUrlQueryParameter,
     stripTrailingSourceName
   } = window.HorseRacingPortalCore;
+  const { extractSponichiReaderItems } = window.JapaneseHorseRacingSourceParsers;
 
     const TITLE_SOURCE_NAMES = Object.freeze([
       "スポーツ報知",
@@ -257,6 +259,14 @@
       if (site.id === "sanspo" && site.sitemapUrl) {
         return fetchSanspoStructuredItems(site);
       }
+      // CORS許可済みRSS変換APIはブラウザから直接取得し、停止中の汎用公開プロキシを待たない。
+      if (site.parser === "rss2json" && site.apiUrl) {
+        return fetchRss2JsonSiteItems(site);
+      }
+      // スポニチの一覧はReader Markdownの構造が安定しており、壊れている公開CORS経路へは後退しない。
+      if (site.readerListing) {
+        return fetchReaderListingSiteItems(site);
+      }
 
       const html = await fetchText(site.url, site.accept);
       // RSS/AtomはHTMLとして解釈するとlink要素の属性やXML名前空間を失うため、媒体設定の文書型で解析する。
@@ -276,6 +286,26 @@
 
       // 一覧側で「...」「…」付きの短い見出ししか出ない媒体は、記事ページのog:title/h1を少数だけ確認する。
       // 追加アクセスを増やしすぎるとプロキシ制限を受けやすいため、媒体ごとにtitleHydrationLimitで上限を置く。
+      return hydrateTruncatedTitles(dedupeByUrl(items), site);
+    }
+
+    // rss2jsonの共通変換結果を国内版の正規化・同一ホスト検証へ通す。
+    async function fetchRss2JsonSiteItems(site) {
+      const text = await fetchProxyText(site.apiUrl, CONFIG.REQUEST_TIMEOUT_MS, "application/json");
+      const items = parseRss2JsonItems(text)
+        .map((item) => normalizeItem(item, site))
+        .filter(Boolean);
+      if (items.length === 0) throw new Error(t("noExtract"));
+      return dedupeByUrl(items).sort((left, right) => right.publishedAt - left.publishedAt);
+    }
+
+    // Reader一覧専用媒体はサイト固有抽出器だけで読み、共通の日時・画像・URL検証へ渡す。
+    async function fetchReaderListingSiteItems(site) {
+      const text = await fetchReaderText(site.url);
+      const items = extractSponichiReaderItems(text)
+        .map((item) => normalizeItem({ ...item, source: site.name }, site))
+        .filter(Boolean);
+      if (items.length === 0) throw new Error(t("noExtract"));
       return hydrateTruncatedTitles(dedupeByUrl(items), site);
     }
 

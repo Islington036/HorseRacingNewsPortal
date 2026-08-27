@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20260731-tospo-fallback";
-import { SOURCES } from "./sources.js?v=20260731-tospo-fallback";
+import { runSourceTest } from "./core.js?v=20260828-fetch-routes";
+import { SOURCES } from "./sources.js?v=20260828-fetch-routes";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
@@ -78,6 +78,7 @@ function renderMetrics(result) {
     ["画像読込", result.loadedImages],
     ["配信元画像なし", result.missingThumbnails],
     ["固定ページ混入", result.forbiddenUrlMatches],
+    ["取得先外URL", result.unexpectedUrlMatches],
     ["新着順", result.chronologicalOrderValid ? "OK" : "NG"]
   ];
 
