@@ -1,4 +1,8 @@
 (function () {
+    const NIKKAN_ATOM_URL = "https://www.nikkansports.com/keiba/atom.xml";
+    const NIKKAN_ATOM_API =
+      "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(NIKKAN_ATOM_URL);
+
     // ===== カスタマイズ用設定 =====
     const CONFIG = {
       DAYS_BACK: 3,
@@ -30,23 +34,15 @@
         return "https://r.jina.ai/" + url;
       },
       SITES: [
-        {
-          id: "hochi",
-          name: "スポーツ報知",
-          url: "https://hochi.news/tag/%E7%AB%B6%E9%A6%AC",
-          baseUrl: "https://hochi.news",
-          parser: "hochi",
-          hydrateTruncatedTitles: true,
-          titleHydrationLimit: 6
-        },
+        // スポーツ報知はAI系Readerをrobots.txtで明示的に拒否し、公式RSSやブラウザCORS経路も提供していない。
+        // 外部プロキシによる迂回は行わず、許可済みの安定経路が確認できるまで対象媒体から外す。
         {
           id: "nikkan",
           name: "日刊スポーツ",
-          url: "https://www.nikkansports.com/keiba/atom.xml",
+          url: NIKKAN_ATOM_URL,
+          apiUrl: NIKKAN_ATOM_API,
           baseUrl: "https://www.nikkansports.com",
-          parser: "atom",
-          documentType: "application/xml",
-          accept: "application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8"
+          parser: "rss2json"
         },
         {
           id: "tospo",
@@ -77,6 +73,7 @@
           url: "https://keiba.sponichi.co.jp/news",
           baseUrl: "https://keiba.sponichi.co.jp",
           parser: "sponichi",
+          readerListing: true,
           hydrateTruncatedTitles: true,
           // 一覧は多くの記事を「...」で省略するため、表示上限相当まで詳細タイトルを補完する。
           // 同時接続は4件に抑え、記事ページと公開プロキシへ過剰な負荷を掛けない。

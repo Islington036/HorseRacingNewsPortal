@@ -8,6 +8,7 @@ const {
   finalizeStructuredSourceItems,
   isUrlHostname,
   mapWithConcurrency,
+  parseRss2JsonItems,
   parseJapaneseDate,
   preferNonTerminalTitleCandidate,
   setUrlQueryParameter,
@@ -17,6 +18,7 @@ const {
 async function run() {
   testStructuredSourceMerge();
   testStructuredEmptyResult();
+  testRss2JsonItems();
   testJapaneseDateParsing();
   testUrlUtilities();
   testReaderTitleCandidates();
@@ -27,7 +29,7 @@ async function run() {
   await testRequestRateLimiter();
   await testRateLimitExtensionDuringWait();
   await testRateLimitAbort();
-  console.log("portal-core: 12 tests passed");
+  console.log("portal-core: 13 tests passed");
 }
 
 // APIと完全RSSで同じ記事を返しても、最新日時を残して新着順・上限件数へ揃うことを確認する。
@@ -54,6 +56,30 @@ function testStructuredSourceMerge() {
 function testStructuredEmptyResult() {
   assert.deepEqual(finalizeStructuredSourceItems([], [], 18), { hasResult: true, items: [] });
   assert.deepEqual(finalizeStructuredSourceItems([], null, 18), { hasResult: false, items: [] });
+}
+
+// CORS対応RSS変換APIから元記事URL・UTC日時・一覧画像・カテゴリを共通形式で保持する。
+function testRss2JsonItems() {
+  const items = parseRss2JsonItems(JSON.stringify({
+    status: "ok",
+    items: [{
+      title: "テスト記事",
+      link: "https://example.com/news/1",
+      pubDate: "2026-08-27 09:38:54",
+      thumbnail: "https://example.com/thumb.jpg",
+      enclosure: { link: "https://example.com/large.jpg" },
+      categories: ["Racing"]
+    }]
+  }));
+
+  assert.deepEqual(items, [{
+    title: "テスト記事",
+    url: "https://example.com/news/1",
+    publishedAt: "2026-08-27T09:38:54Z",
+    thumbnail: "https://example.com/thumb.jpg",
+    categories: ["Racing"]
+  }]);
+  assert.throws(() => parseRss2JsonItems({ status: "error" }), /RSS JSON/);
 }
 
 // タイムゾーンなし日時をJSTとして読み、年なし12月表記を年跨ぎで前年へ補正する。

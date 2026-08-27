@@ -4,6 +4,7 @@ const {
   createRequestRateLimiter,
   isUrlHostname,
   mapWithConcurrency,
+  parseRss2JsonItems,
   setUrlQueryParameter
 } = window.HorseRacingPortalCore;
 const portalConfig = window.InternationalHorseRacingPortalDefinition
@@ -60,6 +61,8 @@ export async function runSourceTest(source) {
   const imageCoverage = itemCount ? loadedImages / itemCount : 0;
   const routeMatched = !source.requiredRoute || response.route === source.requiredRoute;
   const forbiddenUrlMatches = checkedItems.filter((item) => matchesForbiddenUrl(item.url, source.forbiddenUrlPatterns)).length;
+  // パーサーが返した全URLを媒体のorigin・記事パス条件へ再照合し、別カテゴリや外部ホストの混入を隠さない。
+  const unexpectedUrlMatches = checkedItems.filter((item) => !matchesSourcePath(item.url, source)).length;
   // 同一公開時刻の記事は許容し、後続記事が前の記事より新しくなる逆転だけを不正とする。
   const chronologicalOrderValid = checkedItems.every((item, index) =>
     index === 0 || !item.publishedAt || !checkedItems[index - 1].publishedAt ||
@@ -78,6 +81,7 @@ export async function runSourceTest(source) {
     loadedImages,
     imageCoverage,
     forbiddenUrlMatches,
+    unexpectedUrlMatches,
     chronologicalOrderValid,
     passed:
       itemCount >= minimumItems &&
@@ -85,6 +89,7 @@ export async function runSourceTest(source) {
       (!source.requireDate || datedItems === itemCount) &&
       routeMatched &&
       forbiddenUrlMatches === 0 &&
+      unexpectedUrlMatches === 0 &&
       (!source.requireDescendingDates || chronologicalOrderValid) &&
       imageCoverage >= minimumImageCoverage &&
       // URLが配信された画像は全件読めることを要求し、画像URL自体がない記事とは別に判定する。
@@ -233,12 +238,7 @@ function normalizeProtocol(value, source) {
 // rss2jsonのCORS対応JSONから、共有RSSの指定カテゴリだけを共通記事形式へ変換する。
 // 無料APIはRSS先頭の一部だけを返すため、カテゴリ判定はURL推測ではなく公式RSSのcategories完全一致で行う。
 export function parseRss2Json(text, source) {
-  const data = JSON.parse(String(text || ""));
-  if (!data || data.status !== "ok" || !Array.isArray(data.items)) {
-    throw new Error("RSS JSONを解析できませんでした");
-  }
-
-  return data.items
+  return parseRss2JsonItems(text)
     .filter((item) => {
       const categories = Array.isArray(item && item.categories) ? item.categories.map(cleanText) : [];
       return !source.rssCategory || categories.includes(source.rssCategory);
@@ -246,11 +246,12 @@ export function parseRss2Json(text, source) {
     .map((item) => ({
       title: item && item.title,
       // 公式RSSは一部リンクをhttpで返すため、閲覧時のリダイレクトを避けてhttpsへ正規化する。
-      url: String(item && item.link || "").replace(/^http:\/\/(www\.)?thoroughbredracing\.com/i, "https://www.thoroughbredracing.com"),
-      // rss2jsonのpubDateはタイムゾーンなしUTC表記なので、末尾Zを補ってローカル時刻と誤解釈させない。
-      publishedAt: normalizeRss2JsonDate(item && item.pubDate),
-      thumbnail: firstValue(item && item.thumbnail, item && item.enclosure && item.enclosure.link)
-    }));
+      url: normalizeProtocol(item && item.url, source),
+      publishedAt: item && item.publishedAt,
+      thumbnail: item && item.thumbnail
+    }))
+    // 公式RSSに混在する広告・別カテゴリ記事は、本体と同じ媒体パス条件で表示候補から除く。
+    .filter((item) => matchesSourcePath(item.url, source));
 }
 
 // Bing Newsのサイト限定RSSを変換したJSONから、Paulick Reportの元記事URLを復元する。
@@ -999,7 +1000,15 @@ function matchesSourcePath(value, source) {
   }
 
   const path = parsed.pathname.toLowerCase();
-  const allowedOrigins = Array.isArray(source.allowedOrigins) ? source.allowedOrigins : [];
+  let defaultOrigin = "";
+  try {
+    defaultOrigin = new URL(source.baseUrl || source.url).origin;
+  } catch (_error) {
+    defaultOrigin = "";
+  }
+  // 個別指定がなければbaseUrlのoriginを正本にし、同じパスを持つ外部ホストも不合格にする。
+  const configuredOrigins = Array.isArray(source.allowedOrigins) ? source.allowedOrigins : [];
+  const allowedOrigins = configuredOrigins.length ? configuredOrigins : defaultOrigin ? [defaultOrigin] : [];
   const prefixes = Array.isArray(source.pathPrefixes) ? source.pathPrefixes : [];
   const includes = Array.isArray(source.pathHints) ? source.pathHints : [];
   const excludes = Array.isArray(source.excludePathHints) ? source.excludePathHints : [];
