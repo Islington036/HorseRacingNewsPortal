@@ -1,11 +1,18 @@
-import { parseAtom, parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260731-tospo-fallback";
+import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260828-fetch-routes";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
   window.InternationalHorseRacingPortalDefinition.CONFIG;
+const japaneseConfig = window.JapaneseHorseRacingPortalDefinition &&
+  window.JapaneseHorseRacingPortalDefinition.CONFIG;
 const racingComSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racing_com");
+const nikkanSite = japaneseConfig.SITES.find((site) => site.id === "nikkan");
+const sponichiSite = japaneseConfig.SITES.find((site) => site.id === "sponichi");
+const mirrorRacingSite = internationalConfig.SITES.find((site) => site.id === "mirror_racing");
+const scmpRacingSite = internationalConfig.SITES.find((site) => site.id === "scmp_racing");
 const thoroughbredRacingRss = "https://www.thoroughbredracing.com/rss.xml";
 const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(thoroughbredRacingRss);
+const { extractSponichiReaderItems } = window.JapaneseHorseRacingSourceParsers;
 
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
@@ -318,10 +325,44 @@ export const SOURCES = [
   },
   {
     id: "nikkan_atom",
-    name: "日刊スポーツ Atom",
-    url: "https://www.nikkansports.com/keiba/atom.xml",
-    baseUrl: "https://www.nikkansports.com",
-    parse: parseAtom,
+    name: `${nikkanSite.name} Atom / RSS JSON`,
+    url: nikkanSite.apiUrl,
+    baseUrl: nikkanSite.baseUrl,
+    parse: parseRss2Json,
+    tryDirect: true,
+    requiredRoute: "direct",
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0.75
+  },
+  {
+    id: "sponichi_reader",
+    name: `${sponichiSite.name} Reader Listing`,
+    url: sponichiSite.url,
+    baseUrl: sponichiSite.baseUrl,
+    parse: extractSponichiReaderItems,
+    allowTextProxy: true,
+    preferTextProxy: true,
+    textProxyOnly: true,
+    requiredRoute: "text-proxy",
+    maxItems: 18,
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    // 配信元のdummy画像は本体でダミー表示へ置換されるため、実写真の最低比率だけを要求する。
+    minimumImageCoverage: 0.5,
+    forbiddenUrlPatterns: [/\/news\/?$/i]
+  },
+  {
+    id: "mirror_racing_rss_api",
+    name: `${mirrorRacingSite.name} RSS JSON`,
+    url: mirrorRacingSite.apiUrl,
+    baseUrl: mirrorRacingSite.baseUrl,
+    parse: parseRss2Json,
+    tryDirect: true,
+    requiredRoute: "direct",
+    pathPrefixes: ["/sport/horse-racing/"],
+    requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
@@ -424,10 +465,14 @@ export const SOURCES = [
   },
   {
     id: "scmp_racing_rss",
-    name: "SCMP Racing RSS",
-    url: "https://www.scmp.com/rss/39/feed/",
-    baseUrl: "https://www.scmp.com",
-    parse: parseFeed,
+    name: `${scmpRacingSite.name} RSS JSON`,
+    url: scmpRacingSite.apiUrl,
+    baseUrl: scmpRacingSite.baseUrl,
+    parse: parseRss2Json,
+    tryDirect: true,
+    requiredRoute: "direct",
+    pathPrefixes: ["/sport/racing/"],
+    requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
