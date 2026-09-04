@@ -142,54 +142,57 @@
       renderErrors();
       const previousItems = state.allItems;
       const previousItemIds = new Set(previousItems.map((item) => item.id));
+      const completedSiteIds = new Set();
+      const fetchedItemsBySite = new Map();
       const failedSiteIds = new Set();
 
-      // 各媒体は独立しているため、1サイトの失敗で全体表示を止めないようallSettledで並列取得する。
-      const results = await Promise.allSettled(CONFIG.SITES.map(fetchSite));
-      const fetchedItems = [];
-
-      results.forEach((result, index) => {
-        const site = CONFIG.SITES[index];
-        if (result.status === "fulfilled") {
-          fetchedItems.push(...result.value);
-          if (result.value.length > 0) {
-            // 期間内記事がない媒体でも「取得はできたが最新が古い」と説明するため、媒体ごとの最新日時を保存する。
-            const latestItem = result.value.reduce((latest, item) => !latest || item.publishedAt > latest.publishedAt ? item : latest, null);
-            if (latestItem && latestItem.publishedAt) {
-              state.siteLatest[site.id] = latestItem.publishedAt.toISOString();
-            }
+      // 取得対象は一括でキューへ入れ、完了した媒体から新データへ差し替えて画面へ反映する。
+      // 各取得内で例外を処理し、1サイトの失敗で残りの媒体まで止めない。
+      try {
+        await mapWithConcurrency(CONFIG.SITES, CONFIG.SITES.length, async (site) => {
+          try {
+            const items = await fetchSite(site);
+            completedSiteIds.add(site.id);
+            fetchedItemsBySite.set(site.id, items);
+            markItemsForAnimation(items, previousItemIds);
+            updateSiteLatest(site, items);
+          } catch (error) {
+            // タイムアウトや一時的なプロキシ制限で失敗した媒体は、前回キャッシュを残すためIDを控える。
+            completedSiteIds.add(site.id);
+            failedSiteIds.add(site.id);
+            state.errors.push({
+              site: site.name,
+              message: error && error.message ? error.message : String(error)
+            });
           }
-        } else {
-          // タイムアウトや一時的なプロキシ制限で失敗した媒体は、あとで前回キャッシュを残すためIDを控える。
-          failedSiteIds.add(site.id);
-          state.errors.push({
-            site: site.name,
-            message: result.reason && result.reason.message ? result.reason.message : String(result.reason)
-          });
-        }
-      });
 
+          renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite, failedSiteIds);
+        });
+      } finally {
+        // 想定外の例外でも更新ボタンを操作可能な状態へ必ず戻す。
+        state.isLoading = false;
+        elements.refreshButton.disabled = false;
+        elements.refreshButton.textContent = t("refresh");
+      }
+
+      const fetchedItems = collectFetchedItems(fetchedItemsBySite);
       // 媒体取得が成功しても個別の見出し補完だけ失敗することがある。
       // 同じURLの前回キャッシュが完全見出しなら、省略形で上書きせず表示品質を維持する。
       const fetchedItemsWithStableTitles = preserveCompleteCachedTitles(fetchedItems, previousItems);
       const preservedFailedItems = getPreservedItemsForFailedSites(previousItems, failedSiteIds);
-      const merged = dedupeByUrl([...fetchedItemsWithStableTitles, ...preservedFailedItems])
-        .filter(isWithinMaxWindow)
-        .sort((a, b) => b.publishedAt - a.publishedAt);
+      const merged = buildMergedItems([...fetchedItemsWithStableTitles, ...preservedFailedItems]);
+      const successfulSiteCount = completedSiteIds.size - failedSiteIds.size;
 
-      if (fetchedItemsWithStableTitles.length > 0 && merged.length > 0) {
+      if (successfulSiteCount > 0) {
+        // 成功媒体が0件だった場合も旧記事へ戻さず、その媒体の最新取得結果として確定する。
         state.allItems = merged;
-        markItemsForAnimation(merged, previousItemIds);
         state.lastUpdatedAt = new Date();
         saveCache();
-      } else if (merged.length > 0) {
-        // 全サイト失敗時は「更新できた」と誤表示しないよう、時刻とキャッシュ保存は触らず前回表示だけ維持する。
-        state.allItems = merged;
+      } else {
+        // 全サイト失敗時は更新時刻とキャッシュを触らず、更新前の表示を維持する。
+        state.allItems = previousItems;
       }
 
-      state.isLoading = false;
-      elements.refreshButton.disabled = false;
-      elements.refreshButton.textContent = t("refresh");
       // render内の通常表示ステータスを先に確定させ、更新結果の詳細ステータスを最後に上書きする。
       render();
 
@@ -204,7 +207,7 @@
           state.errors.length > 0 ? t("partialFailedStatus") : t("completedStatus"),
           t("completedMessage", { days: state.activeDaysBack, count: visibleCount })
         );
-      } else if (merged.length > 0) {
+      } else if (successfulSiteCount > 0) {
         setStatus(t("noWindowStatus"), t("noWindowAfterFetch", { days: state.activeDaysBack }));
       } else if (state.allItems.length > 0) {
         setStatus(t("failedStatus"), t("failedUsingCache"));
@@ -212,6 +215,36 @@
         setStatus(t("failedStatus"), t("failedNoItems"));
       }
 
+    }
+
+    // 取得済み媒体の新データと、未完了または失敗媒体の旧キャッシュを合わせて途中経過を描画する。
+    function renderIncrementalRefreshProgress(previousItems, completedSiteIds, fetchedItemsBySite, failedSiteIds) {
+      const fetchedItems = preserveCompleteCachedTitles(collectFetchedItems(fetchedItemsBySite), previousItems);
+      const pendingPreviousItems = previousItems.filter((item) => !completedSiteIds.has(item.sourceId) || failedSiteIds.has(item.sourceId));
+      state.allItems = buildMergedItems([...fetchedItems, ...pendingPreviousItems]);
+      render();
+    }
+
+    // Map<siteId, items[]> から媒体ごとの取得結果を平坦化する。
+    function collectFetchedItems(fetchedItemsBySite) {
+      return [...fetchedItemsBySite.values()].reduce((items, siteItems) => items.concat(siteItems), []);
+    }
+
+    // キャッシュ・途中表示・最終表示で共通する保持期間、重複排除、新着順を一箇所にまとめる。
+    function buildMergedItems(items) {
+      return dedupeByUrl(items)
+        .filter(isWithinMaxWindow)
+        .sort((a, b) => b.publishedAt - a.publishedAt);
+    }
+
+    // 期間内記事がない場合の注記用に、媒体ごとの最新検出日時を保存する。
+    function updateSiteLatest(site, items) {
+      if (!items.length) return;
+
+      const latestItem = items.reduce((latest, item) => !latest || item.publishedAt > latest.publishedAt ? item : latest, null);
+      if (latestItem && latestItem.publishedAt) {
+        state.siteLatest[site.id] = latestItem.publishedAt.toISOString();
+      }
     }
 
     function getPreservedItemsForFailedSites(previousItems, failedSiteIds) {
@@ -419,7 +452,7 @@
         .filter(Boolean)
         .map((item) => normalizeItem(item, site))
         .filter(Boolean)
-        .filter((item) => isSanspoKeibaArticleUrl(item.url));
+        .filter((item) => isSanspoKeibaArticleUrl(item.url, site));
       if (normalizedItems.length === 0) throw new Error(t("noExtract"));
       return dedupeByUrl(normalizedItems);
     }
@@ -438,7 +471,8 @@
       }
 
       return [...new Set(urls)]
-        .filter(isSanspoKeibaArticleUrl)
+        // 会員向けbasicページで詳細補完の上限を消費しないよう、公開記事だけに絞ってからsliceする。
+        .filter((url) => isSanspoKeibaArticleUrl(url, site))
         .map((url) => ({ title: "", url, publishedAt: null, thumbnail: "", source: site.name }));
     }
 
@@ -535,12 +569,13 @@
       }
     }
 
-    // サンスポ競馬Sitemapで許可する一般記事・基本情報記事の正式URLだけを通す。
-    function isSanspoKeibaArticleUrl(value) {
+    // サンスポ競馬Sitemapで許可する公開ニュース記事の正式URLだけを通す。
+    function isSanspoKeibaArticleUrl(value, site) {
       try {
         const parsed = new URL(value);
-        return parsed.origin === "https://www.sanspo.com" &&
-          /^\/race\/article\/(?:general|basic)\/20\d{6}-[A-Z0-9]+\/?$/i.test(parsed.pathname);
+        const articlePathPattern = site && site.articlePathPattern ||
+          /^\/race\/article\/general\/20\d{6}-[A-Z0-9]+\/?$/i;
+        return parsed.origin === "https://www.sanspo.com" && articlePathPattern.test(parsed.pathname);
       } catch (_error) {
         return false;
       }
@@ -1575,7 +1610,10 @@
           .filter(isWithinMaxWindow)
           .sort((a, b) => b.publishedAt - a.publishedAt);
         state.siteLatest = cached.siteLatest || {};
-        state.lastUpdatedAt = cached.lastUpdatedAt ? new Date(cached.lastUpdatedAt) : null;
+        const cachedLastUpdatedAt = cached.lastUpdatedAt ? new Date(cached.lastUpdatedAt) : null;
+        state.lastUpdatedAt = cachedLastUpdatedAt && !Number.isNaN(cachedLastUpdatedAt.getTime())
+          ? cachedLastUpdatedAt
+          : null;
       } catch (_error) {
         state.allItems = [];
         state.siteLatest = {};

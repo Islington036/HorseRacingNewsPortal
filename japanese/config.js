@@ -64,6 +64,8 @@
           url: "https://www.sanspo.com/race/keiba/",
           sitemapUrl: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
           baseUrl: "https://www.sanspo.com",
+          // 会員向けbasicページは記事メタ情報を取得できないため、公開ニュースのgeneralだけを補完対象にする。
+          articlePathPattern: /^\/race\/article\/general\/20\d{6}-[A-Z0-9]+\/?$/i,
           detailHydrationLimit: 8,
           detailHydrationConcurrency: 2
         },
