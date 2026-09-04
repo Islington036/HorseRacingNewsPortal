@@ -29,7 +29,8 @@ async function run() {
   await testRequestRateLimiter();
   await testRateLimitExtensionDuringWait();
   await testRateLimitAbort();
-  console.log("portal-core: 13 tests passed");
+  await testQueuedRateLimitAbort();
+  console.log("portal-core: 14 tests passed");
 }
 
 // APIと完全RSSで同じ記事を返しても、最新日時を残して新着順・上限件数へ揃うことを確認する。
@@ -283,6 +284,39 @@ async function testRateLimitAbort() {
   currentTime = 10;
   await limiter.reserve();
   assert.equal(currentTime, 10);
+}
+
+// 先行予約が未完了でも後方の中止を即時通知し、中止済み要求が開始枠を消費しないことを確認する。
+async function testQueuedRateLimitAbort() {
+  let currentTime = 0;
+  let finishWait;
+  const limiter = createRequestRateLimiter({
+    minStartIntervalMs: 10,
+    now: () => currentTime,
+    wait: (delayMs) => new Promise((resolve) => {
+      finishWait = () => { currentTime += delayMs; resolve(); };
+    })
+  });
+  await limiter.reserve();
+  const preceding = limiter.reserve();
+  await Promise.resolve();
+  await Promise.resolve();
+  const controller = new AbortController();
+  const queued = limiter.reserve(controller.signal);
+  controller.abort();
+  await assert.rejects(
+    Promise.race([queued, new Promise((resolve) => setImmediate(resolve))]),
+    { name: "AbortError" }
+  );
+  // 後方の中止通知が先行要求の完了を待っていないことを、仮想時刻でも確かめる。
+  assert.equal(currentTime, 0);
+  // 開始前から中止済みでも同期throwせず、reserveのPromise契約を維持する。
+  await assert.rejects(limiter.reserve(controller.signal), { name: "AbortError" });
+  finishWait();
+  await preceding;
+  currentTime = 20;
+  await limiter.reserve();
+  assert.equal(currentTime, 20);
 }
 
 function responseLike(status, retryAfter) {

@@ -3,7 +3,9 @@
 const assert = require("node:assert/strict");
 const {
   extractRacenetReaderCards,
+  hasExplicitTimezone,
   isRacenetArticleUrl,
+  parseExplicitTimezoneDate,
   pickRacenetReaderTitle
 } = require("../international/source-parsers.js");
 
@@ -11,7 +13,8 @@ function run() {
   testRacenetReaderCards();
   testRacenetLongTitleFallback();
   testRacenetFixedPages();
-  console.log("international-source-parsers: 3 tests passed");
+  testExplicitTimezoneDates();
+  console.log("international-source-parsers: 4 tests passed");
 }
 
 // 通常カードとpremium鍵付きカードの両方で、最初の実写真と個別記事URLを維持する。
@@ -63,6 +66,26 @@ function testRacenetFixedPages() {
     ).length,
     0
   );
+}
+
+// RSSのGMTと地域別の夏時間を明示どおり解釈し、曖昧な略称は推測しない。
+function testExplicitTimezoneDates() {
+  assert.equal(
+    parseExplicitTimezoneDate("Tue, 01 Sep 2026 19:11:46 GMT").toISOString(),
+    "2026-09-01T19:11:46.000Z"
+  );
+  assert.equal(
+    parseExplicitTimezoneDate("1st September 2026 19:11 BST").toISOString(),
+    "2026-09-01T18:11:00.000Z"
+  );
+  assert.equal(
+    parseExplicitTimezoneDate("September 1, 2026 19:11 HKT").toISOString(),
+    "2026-09-01T11:11:00.000Z"
+  );
+  assert.equal(parseExplicitTimezoneDate("September 1, 2026 19:11 IST"), null);
+  assert.equal(parseExplicitTimezoneDate("September 1, 2026 19:11 CST"), null);
+  assert.equal(hasExplicitTimezone("September 1, 2026 19:11"), false);
+  assert.equal(hasExplicitTimezone("September 1, 2026 19:11 AEDT"), true);
 }
 
 function card(image, body, slug, decoration = "") {

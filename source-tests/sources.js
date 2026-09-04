@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260828-fetch-routes";
+import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260905-acquisition-review";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -8,6 +8,7 @@ const japaneseConfig = window.JapaneseHorseRacingPortalDefinition &&
 const racingComSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racing_com");
 const nikkanSite = japaneseConfig.SITES.find((site) => site.id === "nikkan");
 const sponichiSite = japaneseConfig.SITES.find((site) => site.id === "sponichi");
+const sanspoSite = japaneseConfig.SITES.find((site) => site.id === "sanspo");
 const mirrorRacingSite = internationalConfig.SITES.find((site) => site.id === "mirror_racing");
 const scmpRacingSite = internationalConfig.SITES.find((site) => site.id === "scmp_racing");
 const thoroughbredRacingRss = "https://www.thoroughbredracing.com/rss.xml";
@@ -109,7 +110,8 @@ export const SOURCES = [
     baseUrl: "https://www.sanspo.com",
     allowedOrigins: ["https://www.sanspo.com"],
     pathPrefixes: ["/race/article/"],
-    articlePathPattern: /^\/race\/article\/(?:general|basic)\/20\d{6}-[A-Z0-9]+\/?$/i,
+    // 本体と同じ公開記事だけを補完枠へ入れ、会員ページによる枠の消費を防ぐ。
+    articlePathPattern: sanspoSite.articlePathPattern,
     parse: parseNewsSitemap,
     tryDirect: true,
     allowTextProxy: true,
@@ -386,6 +388,7 @@ export const SOURCES = [
     parse: parseWordPressPosts,
     // TDNのREST APIはCORSを許可しているため、公開プロキシより先にブラウザから直接取得する。
     tryDirect: true,
+    requestCache: internationalConfig.SITES.find((site) => site.id === "tdn_europe").requestCache,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75
@@ -398,6 +401,7 @@ export const SOURCES = [
     parse: parseWordPressPosts,
     // Europe版と同じく、ローカルHTMLのOriginを返す公式CORS経路を第一候補にする。
     tryDirect: true,
+    requestCache: internationalConfig.SITES.find((site) => site.id === "tdn_america").requestCache,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.75

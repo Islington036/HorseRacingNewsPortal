@@ -134,7 +134,8 @@ async function fetchAndParseSource(source) {
     try {
       const text = await fetchText(candidate.url, {
         timeoutMs: source.timeoutMs,
-        headers: candidate.route === "direct" ? source.headers : undefined
+        headers: candidate.route === "direct" ? source.headers : undefined,
+        requestCache: candidate.route === "direct" ? source.requestCache : undefined
       });
       // HTTP 200でもWAFやプロキシのHTML説明ページが返ることがある。
       // 取得とパースを同じtry内に置き、JSON/XMLとして読めない場合は次の候補へフォールバックする。
@@ -162,6 +163,8 @@ async function fetchText(url, options = {}) {
       const response = await fetch(url, {
         signal: controller.signal,
         credentials: "omit",
+        // 長期キャッシュを返す公式APIの再取得方針は、本体と同じ媒体設定に従う。
+        cache: options.requestCache || "default",
         headers: options.headers || {}
       });
       // 成功応答は本文読了まで同じタイマーで監視し、停止時に次のReader経路へ進める。

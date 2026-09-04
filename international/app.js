@@ -11,6 +11,8 @@
   } = window.HorseRacingPortalCore;
   const {
     extractRacenetReaderCards,
+    hasExplicitTimezone,
+    parseExplicitTimezoneDate,
     pickRacenetReaderTitle
   } = window.InternationalHorseRacingSourceParsers;
 
@@ -341,8 +343,11 @@
           try {
             // directFetch用のURLだけはサイト設定の追加ヘッダーを付ける。公開プロキシには余計なヘッダーを渡さない。
             // 現在はRacing.comの公開APIヘッダーが対象で、今後ほかの媒体が追加されても同じ境界を維持する。
-            const requestHeaders = proxyUrl === sourceUrl ? site.requestHeaders || {} : {};
-            const html = await fetchProxyText(proxyUrl, requestHeaders, requestSite.requestTimeoutMs);
+            const isDirectRequest = proxyUrl === sourceUrl;
+            const requestHeaders = isDirectRequest ? site.requestHeaders || {} : {};
+            // 公式APIだけにRequest.cacheを渡し、公開プロキシ側のキャッシュ方針は変更しない。
+            const requestCache = isDirectRequest ? site.requestCache : undefined;
+            const html = await fetchProxyText(proxyUrl, requestHeaders, requestSite.requestTimeoutMs, requestCache);
             const items = await parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
@@ -615,7 +620,7 @@
 
     // 1つのプロキシURLから本文を取得し、HTTPエラーやタイムアウトを例外化する。
     // Readerだけは共通スケジューラで開始間隔を空け、429時にRetry-Afterを尊重して一度だけ再試行する。
-    async function fetchProxyText(proxyUrl, requestHeaders = {}, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
+    async function fetchProxyText(proxyUrl, requestHeaders = {}, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS, requestCache) {
       const usesTextProxy = isUrlHostname(proxyUrl, "r.jina.ai");
 
       // 予約列の待機を通信タイムアウトへ含めないため、Controllerとtimerは実際の各試行開始時に作る。
@@ -632,11 +637,21 @@
             ...requestHeaders
           };
 
-          return await fetch(proxyUrl, {
+          const response = await fetch(proxyUrl, {
             credentials: "omit",
             signal: controller.signal,
-            headers
+            headers,
+            ...(requestCache ? { cache: requestCache } : {})
           });
+          // 成功応答は本文読了まで同じタイマーで監視する。429などは本文を待たず、
+          // Response互換値を共有rate limiterへ返してRetry-After処理を維持する。
+          const bodyText = response.ok ? await response.text() : "";
+          return {
+            bodyText,
+            headers: response.headers,
+            ok: response.ok,
+            status: response.status
+          };
         } catch (error) {
           if (error.name === "AbortError") {
             throw new Error(t("timeout"));
@@ -654,7 +669,7 @@
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      return await response.text();
+      return response.bodyText;
     }
 
     const PARSERS = {
@@ -2083,7 +2098,7 @@
 
       // JSON-LDや一覧ページの<title>から、媒体説明文やカテゴリ名が記事見出しとして紛れ込むことがある。
       // ここを最後の共通ゲートにして、抽出経路ごとの漏れを画面表示前に止める。
-      if (!url || !title || !publishedAt || !isLikelyHeadline(title)) return null;
+      if (!url || !title || !publishedAt || !isLikelyHeadline(title) || !isCandidateArticleUrl(url, site)) return null;
 
       return {
         id: `${site.id}:${url}`,
@@ -2282,6 +2297,8 @@
       } catch (_error) {
         return false;
       }
+      // 同一ホストでもftp等へ遷移させず、記事リンクとして扱うのはHTTP(S)だけに限定する。
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
 
       const host = stripWww(parsed.hostname);
       const siteHost = stripWww(siteUrl.hostname);
@@ -2295,14 +2312,19 @@
       if (path === "/" || lowerPath === sourcePath.toLowerCase()) return false;
       if (/\.(jpg|jpeg|png|gif|webp|svg|pdf|mp4|mov|avi|zip)$/i.test(lowerPath)) return false;
       if (/\/(tag|tags|category|categories|author|authors|search|subscribe|subscription|login|signin|sign-in|register|about|contact|privacy|terms|advertise|video|videos|podcast|racecards?|results?|tips?|free-bets?)($|\/)/i.test(lowerPath)) return false;
-      if (/\/(newsletter|issues?|editions?|today|rankings?|live|premierleague|football|soccer|uk-news|world-news|royal|tv-guide|null)($|\/)/i.test(lowerPath)) return false;
+      if (/\/(newsletter|issues?|today|rankings?|live|premierleague|football|soccer|uk-news|world-news|royal|tv-guide|null)($|\/)/i.test(lowerPath)) return false;
+      // TTRの/edition/日付/記事は索引ではないため、下の専用規則へ渡す。
+      if (site.id !== "ttrausnz" && /\/editions?($|\/)/i.test(lowerPath)) return false;
       if (/\/(the-biz|sales-reports|expert-opinion|breeding-and-bloodstock|bloodstock-sales|sales-calendar|sales-results|stallions?|sires?|features?|columnists?)$/i.test(lowerPath)) return false;
       if (/\/news\/(latest-news|racing|tipping|jockeys|interstate|international|industry|tv-shows|spring-racing|blackbook|null)$/i.test(lowerPath)) return false;
       if ((site.id === "racingpost_news" || site.id === "racingpost_bloodstock") && !/-a[a-z0-9]+\/?$/i.test(lowerPath)) {
         // Racing Postのカテゴリ導線も/news/配下に大量にあるため、記事ID付きURLだけを記事として扱う。
         return false;
       }
-      if (site.id === "ttrausnz" && !/^\/edition\/20\d{2}-\d{2}-\d{2}\/[^/]+$/i.test(lowerPath)) {
+      if (site.id === "ttrausnz" && (
+        !/^\/edition\/20\d{2}-\d{2}-\d{2}\/[^/]+$/i.test(lowerPath) ||
+        isTtrAusNzFixedPage(lowerPath.split("/").pop())
+      )) {
         // Readerには案内リンクも多いため、日付エディション配下の個別記事URL以外を許可しない。
         return false;
       }
@@ -2371,10 +2393,19 @@
         const date = new Date(timestamp);
         return Number.isNaN(date.getTime()) ? null : date;
       }
-      const raw = cleanWhitespace(value)
+      const rawWithTimezone = cleanWhitespace(value)
         .replace(/\b(Published|Updated|Last updated|Posted|By)\b:?\s*/ig, "")
-        .replace(/\b(GMT|BST|IST|EDT|EST|CDT|CST|PDT|PST|AEST|AEDT|NZST|NZDT|HKT)\b/g, "")
-        .replace(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\s+/i, "")
+        .trim();
+      if (!rawWithTimezone) return null;
+
+      // GMTなどが付いたRSS日時は端末のローカル時刻へ読み替えず、明示されたオフセットを尊重する。
+      // IST/CSTのように地域で意味が変わる略称は推測せずnullにし、誤った「新着」判定を避ける。
+      if (hasExplicitTimezone(rawWithTimezone)) {
+        return parseExplicitTimezoneDate(rawWithTimezone);
+      }
+
+      const raw = rawWithTimezone
+        .replace(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+/i, "")
         .trim();
       if (!raw) return null;
 
@@ -3147,12 +3178,16 @@
             const site = CONFIG.SITES.find((entry) => entry.id === item.sourceId);
             // 取得対象から削除した媒体（例: news.com.au）は、古いキャッシュに残っていても表示へ戻さない。
             if (!site) return null;
+            const url = absoluteUrl(item.url, site.baseUrl);
+            // 古いキャッシュも現在のURL規則で再検証し、外部リンクや固定ページを表示へ戻さない。
+            if (!isCandidateArticleUrl(url, site)) return null;
             return {
               ...item,
+              url,
               region: item.region || site.region,
               regionName: item.regionName || getRegionLabel(item.region || site.region),
               publishedAt: new Date(item.publishedAt),
-              thumbnail: resolveThumbnail(item.thumbnail, site, item.url)
+              thumbnail: resolveThumbnail(item.thumbnail, site, url)
             };
           })
           .filter(Boolean)
@@ -3160,7 +3195,9 @@
           .filter(isWithinMaxWindow)
           .sort((a, b) => b.publishedAt - a.publishedAt);
         state.siteLatest = cached.siteLatest && typeof cached.siteLatest === "object" ? cached.siteLatest : {};
-        state.lastUpdatedAt = cached.lastUpdatedAt ? new Date(cached.lastUpdatedAt) : null;
+        const lastUpdatedAt = cached.lastUpdatedAt ? new Date(cached.lastUpdatedAt) : null;
+        // 壊れた保存値をIntl.DateTimeFormatへ渡すと初期描画が止まるため、無効日時は未更新へ戻す。
+        state.lastUpdatedAt = lastUpdatedAt && !Number.isNaN(lastUpdatedAt.getTime()) ? lastUpdatedAt : null;
       } catch (_error) {
         state.allItems = [];
         state.siteLatest = {};
