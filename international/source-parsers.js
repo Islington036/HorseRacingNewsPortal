@@ -10,6 +10,43 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
+  // RSSや一覧に付く明示的なタイムゾーンを、実行端末のローカル時刻へ変えずDateへ変換する。
+  // IST/CSTは地域によって意味が変わるため推測せず、呼び出し元で日時不明として扱わせる。
+  function parseExplicitTimezoneDate(value) {
+    const raw = cleanWhitespace(value);
+    const timezoneMatch = raw.match(/\b(GMT|UTC|BST|IST|EDT|EST|CDT|CST|PDT|PST|AEST|AEDT|NZST|NZDT|HKT)\b/i);
+    if (!timezoneMatch) return null;
+
+    const timezone = timezoneMatch[1].toUpperCase();
+    if (timezone === "IST" || timezone === "CST") return null;
+
+    const offsets = {
+      GMT: "+0000",
+      UTC: "+0000",
+      BST: "+0100",
+      EDT: "-0400",
+      EST: "-0500",
+      CDT: "-0500",
+      PDT: "-0700",
+      PST: "-0800",
+      AEST: "+1000",
+      AEDT: "+1100",
+      NZST: "+1200",
+      NZDT: "+1300",
+      HKT: "+0800"
+    };
+    const normalized = raw
+      .replace(/(\d+)(st|nd|rd|th)/gi, "$1")
+      .replace(timezoneMatch[0], offsets[timezone]);
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  // タイムゾーン略称が明示されているかを判定し、未解釈の値をローカル時刻として誤読するのを防ぐ。
+  function hasExplicitTimezone(value) {
+    return /\b(GMT|UTC|BST|IST|EDT|EST|CDT|CST|PDT|PST|AEST|AEDT|NZST|NZDT|HKT)\b/i.test(String(value || ""));
+  }
+
   // RacenetのReaderカードから、実写真・本文・個別記事URLだけを抜き出す。
   // premium記事では実写真の直後に鍵アイコンが入るため、追加画像を読み飛ばして最初の写真を維持する。
   function extractRacenetReaderCards(text) {
@@ -78,7 +115,9 @@
 
   return Object.freeze({
     extractRacenetReaderCards,
+    hasExplicitTimezone,
     isRacenetArticleUrl,
+    parseExplicitTimezoneDate,
     pickRacenetReaderTitle
   });
 });

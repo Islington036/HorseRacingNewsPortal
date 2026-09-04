@@ -41,7 +41,7 @@
 
     // 1要求分の開始枠を予約する。待機中に別要求が429を受ける可能性があるため、
     // 一度sleepした後も共有ブロック時刻を読み直し、実際に開始可能になるまで繰り返す。
-    function reserve(signal) {
+    async function reserve(signal) {
       const reservation = reservationQueue
         .catch(() => {})
         .then(async () => {
@@ -50,14 +50,16 @@
             const currentTime = now();
             const waitUntil = Math.max(nextStartAt, blockedUntil);
             if (waitUntil <= currentTime) break;
-            await waitWithSignal(waitUntil - currentTime, signal, wait);
+            await waitWithSignal(wait(waitUntil - currentTime), signal);
           }
           nextStartAt = now() + minStartIntervalMs;
         });
 
       // 1件の中止・失敗で後続予約まで永久停止しないよう、共有チェーン側だけ例外を吸収する。
       reservationQueue = reservation.catch(() => {});
-      return reservation;
+      // 先行予約が待機中でも呼び出し元の中止は直ちに返す。内部列は維持し、
+      // 中止済み予約は自分の順番でthrowIfAbortedにより開始枠を消費せず通過する。
+      return waitWithSignal(reservation, signal);
     }
 
     // 指定ミリ秒だけ全要求の開始を停止する。複数の429が重なった場合は最も遅い解除時刻を残す。
@@ -309,10 +311,10 @@
     return new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
   }
 
-  // 予約待機中に媒体全体の期限へ達した場合、実HTTPを開始せず直ちに待機列から離脱する。
-  function waitWithSignal(delayMs, signal, wait) {
+  // 時間待機と先行予約待ちの両方で、媒体全体の期限に達したら実HTTPを開始せず待機を終了する。
+  function waitWithSignal(promise, signal) {
     throwIfAborted(signal);
-    if (!signal) return Promise.resolve(wait(delayMs));
+    if (!signal) return Promise.resolve(promise);
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -325,7 +327,7 @@
       const handleAbort = () => finish(reject, createAbortError());
 
       signal.addEventListener("abort", handleAbort, { once: true });
-      Promise.resolve(wait(delayMs)).then(
+      Promise.resolve(promise).then(
         (value) => finish(resolve, value),
         (error) => finish(reject, error)
       );
