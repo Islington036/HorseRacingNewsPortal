@@ -3,8 +3,13 @@
 const assert = require("node:assert/strict");
 const {
   extractRacenetReaderCards,
+  extractRacingTvReaderCards,
+  extractTheAgeReaderItems,
   hasExplicitTimezone,
+  isCandidateArticleUrl,
   isRacenetArticleUrl,
+  isTtrAusNzFixedPage,
+  parseInternationalDate,
   parseExplicitTimezoneDate,
   pickRacenetReaderTitle
 } = require("../international/source-parsers.js");
@@ -14,7 +19,10 @@ function run() {
   testRacenetLongTitleFallback();
   testRacenetFixedPages();
   testExplicitTimezoneDates();
-  console.log("international-source-parsers: 4 tests passed");
+  testSharedArticleUrlGate();
+  testRacingTvReaderCards();
+  testTheAgeReaderItems();
+  console.log("international-source-parsers: 7 tests passed");
 }
 
 // 通常カードとpremium鍵付きカードの両方で、最初の実写真と個別記事URLを維持する。
@@ -86,6 +94,73 @@ function testExplicitTimezoneDates() {
   assert.equal(parseExplicitTimezoneDate("September 1, 2026 19:11 CST"), null);
   assert.equal(hasExplicitTimezone("September 1, 2026 19:11"), false);
   assert.equal(hasExplicitTimezone("September 1, 2026 19:11 AEDT"), true);
+  assert.equal(
+    parseInternationalDate("5 hours ago", Date.UTC(2026, 8, 5, 12)).toISOString(),
+    "2026-09-05T07:00:00.000Z"
+  );
+  assert.equal(parseInternationalDate("September 4, 2026") instanceof Date, true);
+  assert.equal(parseInternationalDate("May 16"), null);
+}
+
+// 本体とテスターが同じホスト・パス・プロトコル条件で記事URLを判定する。
+function testSharedArticleUrlGate() {
+  const site = {
+    id: "theage_racing",
+    url: "https://www.theage.com.au/sport/racing",
+    baseUrl: "https://www.theage.com.au",
+    pathHints: ["/sport/racing/"]
+  };
+  assert.equal(
+    isCandidateArticleUrl("https://www.theage.com.au/sport/racing/proper-story-20260904-p60abc.html", site),
+    true
+  );
+  assert.equal(isCandidateArticleUrl("https://outside.example/sport/racing/story.html", site), false);
+  assert.equal(isCandidateArticleUrl("ftp://www.theage.com.au/sport/racing/story.html", site), false);
+  assert.equal(isCandidateArticleUrl("https://www.theage.com.au/sport/racing", site), false);
+  assert.equal(isTtrAusNzFixedPage("job-board"), true);
+  assert.equal(isTtrAusNzFixedPage("looking-ahead-next-week"), true);
+  assert.equal(isTtrAusNzFixedPage("saturday-preview"), false);
+}
+
+// Racing TV一覧は各画像と同じ記事URLを結び、公開相対時刻があるカードだけ日時を返す。
+function testRacingTvReaderCards() {
+  const text = [
+    "[![Image](https://images.example/first.webp) Five horses to follow on Saturday 5 hours ago Summary follows. Read More](https://www.racingtv.com/news/five-horses-to-follow)",
+    "[![Image](https://images.example/second.webp) Another proper racing headline](https://www.racingtv.com/news/another-proper-racing-headline)"
+  ].join("\n");
+  const items = extractRacingTvReaderCards(text);
+  const nowMs = Date.UTC(2026, 8, 5, 12);
+
+  assert.equal(items.length, 2);
+  assert.equal(items[0].title, "Five horses to follow on Saturday");
+  assert.equal(items[0].publishedAt, "5 hours ago");
+  assert.equal(items[1].publishedAt, "");
+  // 同じ一覧取得時刻を渡せば、同じ相対表記は処理順にかかわらず完全に同じDateになる。
+  assert.equal(
+    parseInternationalDate(items[0].publishedAt, nowMs).getTime(),
+    parseInternationalDate("5 hours ago", nowMs).getTime()
+  );
+}
+
+// The Age一覧では画像カード、見出し、日付が同じ記事URLに属する場合だけ記事化する。
+function testTheAgeReaderItems() {
+  const text = [
+    "[![Image 1: First story](https://images.example/first.jpg)](https://www.theage.com.au/sport/racing/first-story-20260904-p60abc.html)",
+    "##### [Horse racing](https://www.theage.com.au/topic/horse-racing-1n6g)",
+    "### [First story headline](https://www.theage.com.au/sport/racing/first-story-20260904-p60abc.html)",
+    "Summary.",
+    "*   September 4, 2026",
+    "*   by Reporter",
+    "[![Image 2: Second story](https://images.example/second.jpg)](https://www.theage.com.au/sport/racing/second-story-20260903-p60def.html)",
+    "### [Second story headline](https://www.theage.com.au/sport/racing/second-story-20260903-p60def.html)",
+    "*   September 3, 2026"
+  ].join("\n");
+  const items = extractTheAgeReaderItems(text);
+
+  assert.equal(items.length, 2);
+  assert.equal(items[0].title, "First story headline");
+  assert.equal(items[0].publishedAt, "September 4, 2026");
+  assert.equal(items[1].thumbnail, "https://images.example/second.jpg");
 }
 
 function card(image, body, slug, decoration = "") {

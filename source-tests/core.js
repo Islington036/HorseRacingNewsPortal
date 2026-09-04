@@ -10,6 +10,12 @@ const {
 const portalConfig = window.InternationalHorseRacingPortalDefinition
   ? window.InternationalHorseRacingPortalDefinition.CONFIG
   : {};
+const {
+  extractRacingTvReaderCards,
+  extractTheAgeReaderItems,
+  isCandidateArticleUrl,
+  parseInternationalDate
+} = window.InternationalHorseRacingSourceParsers;
 
 // 媒体専用テストも本体と同じReader公開枠を消費するため、開始間隔と429再試行設定を共有する。
 const textProxyRateLimiter = createRequestRateLimiter({
@@ -140,6 +146,12 @@ async function fetchAndParseSource(source) {
       // HTTP 200でもWAFやプロキシのHTML説明ページが返ることがある。
       // 取得とパースを同じtry内に置き、JSON/XMLとして読めない場合は次の候補へフォールバックする。
       const parsedItems = await source.parse(text, source);
+      if (!Array.isArray(parsedItems)) throw new Error("記事配列を抽出できませんでした");
+      if (parsedItems.length === 0 && (source.minimumItems ?? 1) > 0) {
+        // 本体と同じく、HTTP成功でも抽出0件なら次の取得経路へ進む。
+        // これによりWAF説明HTMLを空配列として誤って成功扱いせず、Reader予備経路まで検証できる。
+        throw new Error("ヘッドラインを抽出できませんでした");
+      }
       return { parsedItems, route: candidate.route };
     } catch (error) {
       lastError = error;
@@ -231,6 +243,22 @@ export function parseFeed(text, source) {
       thumbnail
     };
   }).filter(Boolean);
+}
+
+// Racing TVのReaderカードを共有抽出器で読み、日時が確定した記事だけを本体と同じ条件で返す。
+export function parseRacingTvReader(text, source) {
+  // 同じ一覧の相対時刻は一つの基準時刻から計算し、処理中のミリ秒差で新着順判定が逆転しないようにする。
+  const nowMs = Date.now();
+  return extractRacingTvReaderCards(text)
+    .map((item) => ({ ...item, publishedAt: parseInternationalDate(item.publishedAt, nowMs) }))
+    .filter((item) => item.publishedAt && isCandidateArticleUrl(item.url, source));
+}
+
+// The AgeのReader一覧を共有抽出器で読み、本体と同じ最終URL条件へ通す。
+export function parseTheAgeReader(text, source) {
+  return extractTheAgeReaderItems(text)
+    .map((item) => ({ ...item, publishedAt: parseInternationalDate(item.publishedAt) }))
+    .filter((item) => item.publishedAt && isCandidateArticleUrl(item.url, source));
 }
 
 // HTTPS対応済み媒体が古いRSS内だけhttpリンクを返す場合、同一記事の重複と混在コンテンツを防ぐ。

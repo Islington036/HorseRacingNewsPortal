@@ -11,8 +11,12 @@
   } = window.HorseRacingPortalCore;
   const {
     extractRacenetReaderCards,
+    extractRacingTvReaderCards,
+    extractTheAgeReaderItems,
     hasExplicitTimezone,
-    parseExplicitTimezoneDate,
+    isCandidateArticleUrl,
+    isTtrAusNzFixedPage,
+    parseInternationalDate,
     pickRacenetReaderTitle
   } = window.InternationalHorseRacingSourceParsers;
 
@@ -62,6 +66,12 @@
       siteTabs: document.querySelector("#siteTabs"),
       statusLine: document.querySelector("#statusLine"),
       errorList: document.querySelector("#errorList"),
+      errorSummary: document.querySelector("#errorSummary"),
+      sourceDetails: document.querySelector("#sourceDetails"),
+      sourceDetailsLabel: document.querySelector("#sourceDetailsLabel"),
+      sourceDetailsCount: document.querySelector("#sourceDetailsCount"),
+      sourceCountNote: document.querySelector("#sourceCountNote"),
+      pausedSources: document.querySelector("#pausedSources"),
       siteSummary: document.querySelector("#siteSummary"),
       newsList: document.querySelector("#newsList"),
       emptyState: document.querySelector("#emptyState")
@@ -127,6 +137,10 @@
 
     // 初期表示時にキャッシュを復元し、現在の条件で画面を描画する。
     function boot() {
+      // 小画面では記事を先に見せる。以後の再描画でopenを書き換えず、利用者の開閉を維持する。
+      if (typeof window.matchMedia === "function") {
+        elements.sourceDetails.open = !window.matchMedia("(max-width: 820px)").matches;
+      }
       loadSettings();
       applyTheme();
       loadCache();
@@ -793,6 +807,8 @@
       if (site.id === "racingpost_news" || site.id === "racingpost_bloodstock") return extractRacingPostNextDataItems(doc, site);
       // Racing TVはブラウザから公式APIを直接読めないため、現行設定どおりReader Markdownだけを解析する。
       if (site.id === "racingtv") return extractRacingTvMarkdownItems(rawText, site);
+      // The AgeはReader一覧の画像・見出し・日付を同一URLで照合した共有パーサーを使う。
+      if (site.id === "theage_racing") return extractTheAgeReaderItems(rawText);
       // At The RacesはJina Reader経由だと記事リンクが落ちるため、見出しと日付から公式URL形式を復元する。
       if (site.id === "attheraces") return extractAtTheRacesMarkdownItems(rawText, site);
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
@@ -1433,14 +1449,6 @@
       return "";
     }
 
-    // エディション内へ毎日挿入される案内・索引ページを、記事種別に依存せずslugで除外する。
-    // normal型には実ニュースも存在し得るため、normal全体を落とさず既知の固定ページだけを限定除外する。
-    function isTtrAusNzFixedPage(slug) {
-      const value = String(slug || "");
-      return /^(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(value) ||
-        /^looking-ahead(?:-|$)/i.test(value);
-    }
-
     // RacenetをJina Readerで読んだMarkdownから、画像付きカードを記事化する。
     function extractRacenetMarkdownItems(text, site) {
       if (!text) return [];
@@ -1470,14 +1478,13 @@
       if (!text) return [];
 
       const items = [];
-      const cardPattern = /\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\s*([^\[\]]{8,500}?)\]\((https?:\/\/www\.racingtv\.com\/news\/[^)]+)\)/g;
       let undatedCount = 0;
+      // 同じReader一覧にある相対時刻は一つの取得基準時刻から計算し、ミリ秒差による並び順の逆転を防ぐ。
+      const nowMs = Date.now();
 
-      for (const match of String(text).matchAll(cardPattern)) {
-        const image = match[1];
-        const body = cleanWhitespace(match[2]);
-        const url = match[3];
-        let publishedAt = parseDateFromText(body) || parseDateFromUrl(url);
+      for (const card of extractRacingTvReaderCards(text)) {
+        const url = card.url;
+        let publishedAt = parseInternationalDate(card.publishedAt, nowMs) || parseDateFromUrl(url);
         let dateEstimated = false;
 
         if (!publishedAt && CONFIG.ALLOW_UNDATED_LATEST_ITEMS && undatedCount < CONFIG.UNDATED_ITEMS_PER_SITE) {
@@ -1491,11 +1498,11 @@
         if (!publishedAt || !isCandidateArticleUrl(url, site)) continue;
 
         items.push({
-          title: cleanTitle(body.replace(/\b\d+\s+(?:minutes?|mins?|hours?|days?)\s+ago\b.*$/i, "")),
+          title: cleanTitle(card.title),
           url,
           publishedAt,
           dateEstimated,
-          thumbnail: image,
+          thumbnail: card.thumbnail,
           source: site.name
         });
       }
@@ -2284,72 +2291,6 @@
       return !/blank\.gif|spacer\.gif|transparent|no[-_]?image|dummy|placeholder|default[-_]?image|avatar|author|\/icons?\/|\/svgs?\/|\.svg(?:[?#&\s]|$)|brand[-_]?icon|racing-brand-icon|logo|favicon|sprite|pixel|tracking|padlock|lock_|chevron|time_solid|search[-_]?icon|menu[-_]?icon|profile[-_]?icon|star[-_]?icon|open_in_new_window|bookmakers?|\/janus\/|trustarc|consent\.|powered-by|advert|sponsor|initials?|monogram|letter[-_]?avatar|data:image\/gif/i.test(target);
     }
 
-    // URLが対象サイトの記事ページらしいか、ホスト・パス・除外語で判定する。
-    function isCandidateArticleUrl(value, site) {
-      const url = absoluteUrl(value, site.baseUrl);
-      if (!url || url.startsWith("data:")) return false;
-
-      let parsed;
-      let siteUrl;
-      try {
-        parsed = new URL(url);
-        siteUrl = new URL(site.baseUrl);
-      } catch (_error) {
-        return false;
-      }
-      // 同一ホストでもftp等へ遷移させず、記事リンクとして扱うのはHTTP(S)だけに限定する。
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-
-      const host = stripWww(parsed.hostname);
-      const siteHost = stripWww(siteUrl.hostname);
-      const allowedHosts = (site.allowedHosts || []).map(stripWww);
-      if (host !== siteHost && !host.endsWith(`.${siteHost}`) && !allowedHosts.includes(host)) return false;
-
-      const path = parsed.pathname.replace(/\/+$/, "") || "/";
-      const lowerPath = path.toLowerCase();
-      const lowerHref = parsed.href.toLowerCase();
-      const sourcePath = new URL(site.url).pathname.replace(/\/+$/, "") || "/";
-      if (path === "/" || lowerPath === sourcePath.toLowerCase()) return false;
-      if (/\.(jpg|jpeg|png|gif|webp|svg|pdf|mp4|mov|avi|zip)$/i.test(lowerPath)) return false;
-      if (/\/(tag|tags|category|categories|author|authors|search|subscribe|subscription|login|signin|sign-in|register|about|contact|privacy|terms|advertise|video|videos|podcast|racecards?|results?|tips?|free-bets?)($|\/)/i.test(lowerPath)) return false;
-      if (/\/(newsletter|issues?|today|rankings?|live|premierleague|football|soccer|uk-news|world-news|royal|tv-guide|null)($|\/)/i.test(lowerPath)) return false;
-      // TTRの/edition/日付/記事は索引ではないため、下の専用規則へ渡す。
-      if (site.id !== "ttrausnz" && /\/editions?($|\/)/i.test(lowerPath)) return false;
-      if (/\/(the-biz|sales-reports|expert-opinion|breeding-and-bloodstock|bloodstock-sales|sales-calendar|sales-results|stallions?|sires?|features?|columnists?)$/i.test(lowerPath)) return false;
-      if (/\/news\/(latest-news|racing|tipping|jockeys|interstate|international|industry|tv-shows|spring-racing|blackbook|null)$/i.test(lowerPath)) return false;
-      if ((site.id === "racingpost_news" || site.id === "racingpost_bloodstock") && !/-a[a-z0-9]+\/?$/i.test(lowerPath)) {
-        // Racing Postのカテゴリ導線も/news/配下に大量にあるため、記事ID付きURLだけを記事として扱う。
-        return false;
-      }
-      if (site.id === "ttrausnz" && (
-        !/^\/edition\/20\d{2}-\d{2}-\d{2}\/[^/]+$/i.test(lowerPath) ||
-        isTtrAusNzFixedPage(lowerPath.split("/").pop())
-      )) {
-        // Readerには案内リンクも多いため、日付エディション配下の個別記事URL以外を許可しない。
-        return false;
-      }
-      if (site.id === "loveracing_nz" && !/^\/news\/\d+\/[^/]+\.aspx$/i.test(lowerPath)) {
-        // /News/ArticlesやRaceInfo等のナビゲーションを除き、数値記事ID付きの個別記事だけを許可する。
-        return false;
-      }
-
-      const prefixes = site.pathPrefixes || [];
-      if (prefixes.length > 0 && !prefixes.some((prefix) => lowerPath.startsWith(String(prefix).toLowerCase()))) return false;
-      const excludedHints = site.excludePathHints || [];
-      if (excludedHints.some((hint) => lowerPath.includes(String(hint).toLowerCase()))) return false;
-
-      const hints = site.pathHints || [];
-      if (hints.length > 0 && hints.some((hint) => lowerHref.includes(String(hint).toLowerCase()) || lowerPath.includes(String(hint).toLowerCase()))) return true;
-      if (hints.length > 0 && !site.includeAnySameHost) return false;
-      if (site.includeAnySameHost) return true;
-      return /\/(news|racing|bloodstock|articles?|features|sport|horse-racing|breeding|sales|story)\//i.test(lowerPath) || /article-\d+|news-story/i.test(lowerPath);
-    }
-
-    // ホスト名比較のために先頭のwwwだけを取り除く。
-    function stripWww(hostname) {
-      return String(hostname || "").replace(/^www\./i, "");
-    }
-
     // 長いテキストから日付らしい部分だけを抜き出してDateへ変換する。
     function parseDateFromText(value) {
       if (!value) return null;
@@ -2387,22 +2328,12 @@
     // 多様な英語圏ニュースの日付表記をDateへ変換する中心処理。
     function parseDate(value) {
       if (!value) return null;
-      if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-      if (typeof value === "number") {
-        const timestamp = value > 10000000000 ? value : value * 1000;
-        const date = new Date(timestamp);
-        return Number.isNaN(date.getTime()) ? null : date;
-      }
+      const sharedDate = parseInternationalDate(value);
+      if (sharedDate || value instanceof Date || typeof value === "number" || hasExplicitTimezone(value)) return sharedDate;
       const rawWithTimezone = cleanWhitespace(value)
         .replace(/\b(Published|Updated|Last updated|Posted|By)\b:?\s*/ig, "")
         .trim();
       if (!rawWithTimezone) return null;
-
-      // GMTなどが付いたRSS日時は端末のローカル時刻へ読み替えず、明示されたオフセットを尊重する。
-      // IST/CSTのように地域で意味が変わる略称は推測せずnullにし、誤った「新着」判定を避ける。
-      if (hasExplicitTimezone(rawWithTimezone)) {
-        return parseExplicitTimezoneDate(rawWithTimezone);
-      }
 
       const raw = rawWithTimezone
         .replace(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+/i, "")
@@ -2451,8 +2382,8 @@
         }
       }
 
-      const native = new Date(raw.replace(/(\d+)(st|nd|rd|th)/gi, "$1"));
-      if (!Number.isNaN(native.getTime())) return native;
+      const native = parseInternationalDate(raw);
+      if (native) return native;
 
       match = raw.match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?:\s*(am|pm))?)?/i);
       if (match) return makeLocalDate(match[1], match[2], match[3], match[4] || 0, match[5] || 0, match[6]);
@@ -2973,13 +2904,28 @@
       });
 
       elements.siteSummary.innerHTML = [...counts.values()]
-        .filter((entry) => entry.count > 0)
-        .map((entry) => `<span class="chip">${escapeHtml(entry.name)} <span>${entry.count}</span></span>`)
+        // 0件の媒体も隠さず、対象外・期間内0件・取得失敗の確認先を残す。
+        .map((entry) => `<span class="chip${entry.count === 0 ? " is-empty" : ""}">${escapeHtml(entry.name)} <span>${entry.count}</span></span>`)
         .join("") || `<span class="chip">${escapeHtml(t("summaryEmpty"))} <span>0</span></span>`;
+
+      const pausedSites = CONFIG.PAUSED_SITES || [];
+      elements.sourceDetailsLabel.textContent = t("sourceDetails");
+      elements.sourceDetailsCount.textContent = t("sourceDetailsCount", { count: CONFIG.SITES.length, paused: pausedSites.length });
+      elements.sourceCountNote.textContent = t("sourceCountNote");
+      elements.pausedSources.innerHTML = pausedSites.length
+        ? `<strong>${escapeHtml(t("pausedSources"))}</strong>${pausedSites.map((site) =>
+          `<p>${escapeHtml(site.name)}：${escapeHtml(t(site.reasonKey))}</p>`).join("")}`
+        : "";
     }
 
     // 取得失敗サイト、期間内記事なし、画像なし件数などをステータス領域に表示する。
     function renderErrors() {
+      // 詳細が閉じていても失敗は見えるようにする。通常の注記はこの警告件数へ混ぜない。
+      const failedNames = [...new Set(state.errors.map((error) => error.site))];
+      elements.errorSummary.hidden = failedNames.length === 0;
+      elements.errorSummary.textContent = failedNames.length
+        ? t("sourceErrorSummary", { count: failedNames.length, names: failedNames.join(" / ") })
+        : "";
       const messages = [
         ...state.errors.map((error) => ({ type: "error", site: error.site, message: error.message })),
         ...buildWindowNotes(),

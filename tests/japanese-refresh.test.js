@@ -54,6 +54,7 @@ function createHarness(cachedValue, options = {}) {
   if (cachedValue) storage.set("keiba-news-portal-cache-v2", JSON.stringify(cachedValue));
 
   const window = {
+    matchMedia() { return { matches: Boolean(options.mobile) }; },
     addEventListener(type, listener) {
       if (type === "DOMContentLoaded") boot = listener;
     },
@@ -220,6 +221,32 @@ function testInvalidCachedTimestampIsIgnored() {
   assert.equal(harness.portal.getSnapshot().lastUpdatedAt, null);
 }
 
+// 詳細を閉じても失敗を隠さず、0件・停止中の媒体は開いた詳細から確認できる。
+async function testSourceDetailsKeepFailuresVisible() {
+  const harness = createHarness({
+    lastUpdatedAt: new Date().toISOString(),
+    siteLatest: {},
+    allItems: [cachedItem("alpha", "Old Alpha")]
+  }, {
+    mobile: true,
+    fetch() { return Promise.reject(new Error("source unavailable")); }
+  });
+  const details = harness.elements.get("#sourceDetails");
+  assert.equal(details.open, false);
+  assert.match(harness.elements.get("#siteSummary").innerHTML, /Beta <span>0<\/span>/);
+  assert.match(harness.elements.get("#pausedSources").innerHTML, /スポーツ報知/);
+  assert.equal(harness.elements.get("#errorSummary").hidden, true);
+
+  await harness.portal.refresh();
+  assert.equal(details.open, false);
+  assert.equal(harness.elements.get("#errorSummary").hidden, false);
+  assert.match(harness.elements.get("#errorSummary").textContent, /取得失敗 2媒体/);
+  // 利用者が開いた状態は、その後の再描画で初期値へ戻さない。
+  details.open = true;
+  await harness.portal.refresh();
+  assert.equal(details.open, true);
+}
+
 async function testSanspoFiltersMemberPagesBeforeHydrationLimit() {
   const basicUrls = [
     "https://www.sanspo.com/race/article/basic/20260905-AAAAAAAAAAAAAAAAAAAAAAAAAA/",
@@ -305,7 +332,8 @@ async function run() {
   await testAllFailuresPreserveCacheTimestamp();
   testInvalidCachedTimestampIsIgnored();
   await testSanspoFiltersMemberPagesBeforeHydrationLimit();
-  console.log("japanese-refresh: 4 tests passed");
+  await testSourceDetailsKeepFailuresVisible();
+  console.log("japanese-refresh: 5 tests passed");
 }
 
 run().catch((error) => {
