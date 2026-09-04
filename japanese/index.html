@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>競馬ニュース早見ポータル</title>
-  <link rel="stylesheet" href="./styles.css?v=20260905-acquisition-review">
+  <link rel="stylesheet" href="./styles.css?v=20260905-review-followups">
 </head>
 <body>
   <main class="app-shell">
@@ -68,9 +68,20 @@
           <strong>待機中</strong>
           <span>更新ボタンで最新ヘッドラインを取得します。</span>
         </div>
-        <div id="errorList" class="error-list"></div>
+        <div id="errorSummary" class="error-summary" hidden></div>
+        <details id="sourceDetails" class="source-details" open>
+          <summary class="source-details-summary">
+            <span id="sourceDetailsLabel">媒体別の状況</span>
+            <span id="sourceDetailsCount" class="source-details-count"></span>
+          </summary>
+          <div class="source-details-content">
+            <p id="sourceCountNote" class="source-count-note">件数は現在の検索・絞り込み条件での表示数です。</p>
+            <div id="siteSummary" class="summary-panel"></div>
+            <div id="errorList" class="error-list"></div>
+            <div id="pausedSources" class="paused-sources"></div>
+          </div>
+        </details>
       </div>
-      <div id="siteSummary" class="summary-panel"></div>
     </section>
 
     <section id="newsList" class="news-list"></section>
@@ -80,7 +91,7 @@
   </main>
   <script src="../shared/portal-core.js?v=20260905-acquisition-review" defer></script>
   <script src="./source-parsers.js?v=20260828-fetch-routes" defer></script>
-  <script src="./config.js?v=20260905-acquisition-review" defer></script>
-  <script src="./app.js?v=20260905-acquisition-review" defer></script>
+  <script src="./config.js?v=20260905-review-followups" defer></script>
+  <script src="./app.js?v=20260905-review-followups" defer></script>
 </body>
 </html>

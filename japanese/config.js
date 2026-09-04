@@ -33,8 +33,13 @@
       TEXT_PROXY(url) {
         return "https://r.jina.ai/" + url;
       },
+      // 停止中の媒体も画面に残し、取得成功・期間内0件と混同させない。
+      PAUSED_SITES: [
+        { id: "hochi", name: "スポーツ報知", reasonKey: "pausedHochiUnavailable" }
+      ],
       SITES: [
-        // スポーツ報知はAI系Readerをrobots.txtで明示的に拒否し、公式RSSやブラウザCORS経路も提供していない。
+        // スポーツ報知は複数のAIクローラーをrobots.txtで拒否し、公式RSSやブラウザCORS経路も確認できていない。
+        // 公開ニュース索引も元記事と日時・見出しが一致しない例を確認したため、自動取得には採用しない。
         // 外部プロキシによる迂回は行わず、許可済みの安定経路が確認できるまで対象媒体から外す。
         {
           id: "nikkan",
@@ -138,6 +143,12 @@
         noImage: "No Image",
         emptyState: "表示できるニュースがありません。検索条件を変えるか、更新を試してください。",
         summaryEmpty: "該当サイト",
+        sourceDetails: "媒体別の状況",
+        sourceDetailsCount: ({ count, paused }) => `${count}媒体${paused ? ` / 停止 ${paused}媒体` : ""}`,
+        sourceCountNote: "件数は現在の検索・絞り込み条件での表示数です。0件だけでは取得失敗を意味しません。",
+        sourceErrorSummary: ({ count, names }) => `取得失敗 ${count}媒体：${names}。詳細を開いて原因を確認できます。`,
+        pausedSources: "自動取得を停止中の媒体",
+        pausedHochiUnavailable: "正確な見出し・日時を取得できるブラウザ対応経路が未確認です。代替ニュース索引は元記事と一致しない例があるため採用していません。",
         storageError: "設定保存に失敗しました",
         cacheError: "キャッシュ保存に失敗しました"
       },
@@ -191,6 +202,12 @@
         noImage: "No Image",
         emptyState: "No news to display. Change the search or filters, or refresh.",
         summaryEmpty: "Matching sites",
+        sourceDetails: "Source details",
+        sourceDetailsCount: ({ count, paused }) => `${count} sources${paused ? ` / ${paused} paused` : ""}`,
+        sourceCountNote: "Counts reflect the current search and filters. Zero articles does not by itself mean a fetch failure.",
+        sourceErrorSummary: ({ count, names }) => `${count} failed sources: ${names}. Open source details for the cause.`,
+        pausedSources: "Automatic fetching paused",
+        pausedHochiUnavailable: "No browser-compatible route with reliable headlines and dates has been confirmed. Alternative news indexes were not adopted because some entries did not match the original articles.",
         storageError: "Failed to save settings",
         cacheError: "Failed to save cache"
       }

@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20260905-acquisition-review";
-import { SOURCES } from "./sources.js?v=20260905-acquisition-review";
+import { runSourceTest } from "./core.js?v=20260905-review-followups";
+import { SOURCES } from "./sources.js?v=20260905-review-followups";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
