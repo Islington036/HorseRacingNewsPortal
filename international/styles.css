@@ -307,14 +307,13 @@
 
     .status-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr);
       gap: 12px;
       align-items: start;
       margin-bottom: 14px;
     }
 
-    .status-panel,
-    .summary-panel {
+    .status-panel {
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
@@ -358,9 +357,76 @@
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      padding: 12px;
-      min-width: 280px;
-      max-width: 440px;
+      min-width: 0;
+    }
+
+    /* 件数・通常の注記は開閉できる詳細へ集約し、記事へ早く到達できるようにする。 */
+    .source-details {
+      margin-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+
+    .source-details-summary {
+      min-height: 44px;
+      padding: 10px 0;
+      cursor: pointer;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .source-details-summary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    .source-details-count {
+      margin-left: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .source-details-content {
+      padding-bottom: 2px;
+    }
+
+    .source-count-note,
+    .paused-sources {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .paused-sources:not(:empty) {
+      margin: 12px 0 0;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+
+    .paused-sources p {
+      margin: 4px 0 0;
+      overflow-wrap: anywhere;
+    }
+
+    .chip.is-empty {
+      background: var(--soft);
+      color: var(--muted);
+    }
+
+    /* 詳細を閉じても取得失敗を隠さず、色に加えて媒体名と件数を明示する。 */
+    .error-summary:not([hidden]) {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-left: 4px solid var(--warn);
+      background: var(--notice-bg);
+      color: var(--notice-ink);
+      font-size: 13px;
+      line-height: 1.6;
+      overflow-wrap: anywhere;
     }
 
     .filter-area {
@@ -669,7 +735,7 @@
       }
 
       .controls {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr) auto;
       }
 
       button {

@@ -67,6 +67,12 @@
       siteTabs: document.querySelector("#siteTabs"),
       statusLine: document.querySelector("#statusLine"),
       errorList: document.querySelector("#errorList"),
+      errorSummary: document.querySelector("#errorSummary"),
+      sourceDetails: document.querySelector("#sourceDetails"),
+      sourceDetailsLabel: document.querySelector("#sourceDetailsLabel"),
+      sourceDetailsCount: document.querySelector("#sourceDetailsCount"),
+      sourceCountNote: document.querySelector("#sourceCountNote"),
+      pausedSources: document.querySelector("#pausedSources"),
       siteSummary: document.querySelector("#siteSummary"),
       newsList: document.querySelector("#newsList"),
       emptyState: document.querySelector("#emptyState")
@@ -122,6 +128,10 @@
     };
 
     function boot() {
+      // 小画面では記事を先に見せる。以後の再描画でopenを書き換えず、利用者の開閉を維持する。
+      if (typeof window.matchMedia === "function") {
+        elements.sourceDetails.open = !window.matchMedia("(max-width: 820px)").matches;
+      }
       loadSettings();
       applyTheme();
       loadCache();
@@ -1429,12 +1439,27 @@
       });
 
       elements.siteSummary.innerHTML = [...counts.values()]
-        .filter((entry) => entry.count > 0)
-        .map((entry) => `<span class="chip">${escapeHtml(entry.name)} <span>${entry.count}</span></span>`)
+        // 0件の媒体も隠さず、対象外・期間内0件・取得失敗の確認先を残す。
+        .map((entry) => `<span class="chip${entry.count === 0 ? " is-empty" : ""}">${escapeHtml(entry.name)} <span>${entry.count}</span></span>`)
         .join("") || `<span class="chip">${escapeHtml(t("summaryEmpty"))} <span>0</span></span>`;
+
+      const pausedSites = CONFIG.PAUSED_SITES || [];
+      elements.sourceDetailsLabel.textContent = t("sourceDetails");
+      elements.sourceDetailsCount.textContent = t("sourceDetailsCount", { count: CONFIG.SITES.length, paused: pausedSites.length });
+      elements.sourceCountNote.textContent = t("sourceCountNote");
+      elements.pausedSources.innerHTML = pausedSites.length
+        ? `<strong>${escapeHtml(t("pausedSources"))}</strong>${pausedSites.map((site) =>
+          `<p>${escapeHtml(site.name)}：${escapeHtml(t(site.reasonKey))}</p>`).join("")}`
+        : "";
     }
 
     function renderErrors() {
+      // 詳細が閉じていても失敗は見えるようにする。通常の注記はこの警告件数へ混ぜない。
+      const failedNames = [...new Set(state.errors.map((error) => error.site))];
+      elements.errorSummary.hidden = failedNames.length === 0;
+      elements.errorSummary.textContent = failedNames.length
+        ? t("sourceErrorSummary", { count: failedNames.length, names: failedNames.join(" / ") })
+        : "";
       const messages = [
         ...state.errors.map((error) => ({ type: "error", site: error.site, message: error.message })),
         ...buildWindowNotes(),

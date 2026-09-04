@@ -87,6 +87,10 @@
       // tryDirectは公式URLの直接取得、structuredSourcesOnlyは一覧HTMLへの後退禁止、
       // allowEmptyStructuredは正常な0件応答、mergeStructuredSourcesはAPI/RSS併合を表す。
       // allow*/prefer*TextProxyはXML/JSONではなくReaderで読む例外媒体だけに指定する。
+      // 停止中の媒体も画面に残し、取得成功・期間内0件と混同させない。
+      PAUSED_SITES: [
+        { id: "racenet", name: "Racenet", reasonKey: "pausedAccessRestriction" }
+      ],
       SITES: [
         { id: "racingpost_news", name: "Racing Post News", region: "europe", url: "https://www.racingpost.com/news/", sitemapUrl: "https://www.racingpost.com/sitemaps/news-sitemap.xml", baseUrl: "https://www.racingpost.com", parser: "generic", pathPrefixes: ["/news/"], excludePathHints: ["/news/betting-offers/"], preferTextProxy: true, allowSitemapTextProxy: true, preferSitemapTextProxy: true, readerDetailHydration: true, detailHydrationLimit: 8, detailHydrationConcurrency: 2, detailRequestTimeoutMs: 20000 },
         { id: "racingpost_bloodstock", name: "Racing Post Bloodstock", region: "europe", url: "https://www.racingpost.com/bloodstock/", sitemapUrl: "https://www.racingpost.com/sitemaps/news-sitemap.xml", baseUrl: "https://www.racingpost.com", parser: "generic", pathPrefixes: ["/bloodstock/"], preferTextProxy: true, allowSitemapTextProxy: true, preferSitemapTextProxy: true, readerDetailHydration: true, detailHydrationLimit: 8, detailHydrationConcurrency: 2, detailRequestTimeoutMs: 20000 },
@@ -115,7 +119,8 @@
         // 元HTMLはブラウザCORSを許可せず公開CORSプロキシも不安定なため、ReaderのMarkdownだけを短く試す。
         // 専用抽出器が/edition/YYYY-MM-DD/配下の個別記事へ限定し、固定ページの混入を防ぐ。
         { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathPrefixes: ["/edition/"], pathHints: ["/edition/"], preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000 },
-        { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"] },
+        // 一般CORSプロキシの失敗待ちを減らし、媒体別テスターで確認したReaderを先に使う。
+        { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true },
         { id: "thestraight", name: "The Straight", region: "australia", url: "https://thestraight.com.au/", apiUrl: "https://thestraight.com.au/wp-json/wp/v2/posts?per_page=20&_embed=1", feedUrl: "https://thestraight.com.au/feed/", baseUrl: "https://thestraight.com.au", parser: "generic", pathHints: ["/news/", "/racing/", "/bloodstock/"], includeAnySameHost: true, tryDirect: true },
         // Readerは画像・完全見出し・日時を安定して返す一方、後続の公開CORSプロキシは長時間失敗する。
         // textProxyOnlyで既知の失敗経路を除き、更新全体がタイムアウト待ちになることを防ぐ。
@@ -181,6 +186,12 @@
         dateEstimatedTitle: ({ date }) => `取得順から仮配置: ${date}`,
         emptyState: "表示できるニュースがありません。検索条件を変えるか、更新を試してください。",
         summaryEmpty: "該当サイト",
+        sourceDetails: "媒体別の状況",
+        sourceDetailsCount: ({ count, paused }) => `${count}媒体${paused ? ` / 停止 ${paused}媒体` : ""}`,
+        sourceCountNote: "件数は現在の検索・絞り込み条件での表示数です。0件だけでは取得失敗を意味しません。",
+        sourceErrorSummary: ({ count, names }) => `取得失敗 ${count}媒体：${names}。詳細を開いて原因を確認できます。`,
+        pausedSources: "自動取得を停止中の媒体",
+        pausedAccessRestriction: "取得元の自動アクセス制限により停止中です。利用可能な安定経路を確認できるまで取得しません。",
         storageError: "設定保存に失敗しました",
         cacheError: "キャッシュ保存に失敗しました",
         regions: {
@@ -247,6 +258,12 @@
         dateEstimatedTitle: ({ date }) => `Date estimated from the source listing: ${date}`,
         emptyState: "No news to display. Try changing the search or filters, or refresh.",
         summaryEmpty: "Matching sources",
+        sourceDetails: "Source details",
+        sourceDetailsCount: ({ count, paused }) => `${count} sources${paused ? ` / ${paused} paused` : ""}`,
+        sourceCountNote: "Counts reflect the current search and filters. Zero articles does not by itself mean a fetch failure.",
+        sourceErrorSummary: ({ count, names }) => `${count} failed sources: ${names}. Open source details for the cause.`,
+        pausedSources: "Automatic fetching paused",
+        pausedAccessRestriction: "Fetching is paused due to the source's automated-access restrictions until a stable, usable route is confirmed.",
         storageError: "Couldn't save settings",
         cacheError: "Couldn't save cached headlines",
         regions: {

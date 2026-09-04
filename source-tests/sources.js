@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRss2Json, parseSportingLifeApi, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260905-acquisition-review";
+import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260905-review-followups";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -6,6 +6,8 @@ const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
 const japaneseConfig = window.JapaneseHorseRacingPortalDefinition &&
   window.JapaneseHorseRacingPortalDefinition.CONFIG;
 const racingComSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racing_com");
+const racingTvSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racingtv");
+const theAgeSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "theage_racing");
 const nikkanSite = japaneseConfig.SITES.find((site) => site.id === "nikkan");
 const sponichiSite = japaneseConfig.SITES.find((site) => site.id === "sponichi");
 const sanspoSite = japaneseConfig.SITES.find((site) => site.id === "sanspo");
@@ -18,6 +20,34 @@ const { extractSponichiReaderItems } = window.JapaneseHorseRacingSourceParsers;
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  ...(racingTvSite ? [{
+    ...racingTvSite,
+    id: "racingtv_reader",
+    name: `${racingTvSite.name} Reader Listing`,
+    parse: parseRacingTvReader,
+    // 本体のReader専用設定を正本にし、既知の失敗する公開CORS経路を試さない。
+    allowTextProxy: racingTvSite.allowTextProxy !== false,
+    timeoutMs: racingTvSite.requestTimeoutMs,
+    requiredRoute: "text-proxy",
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  }] : []),
+  ...(theAgeSite ? [{
+    ...theAgeSite,
+    id: "theage_racing_reader",
+    name: `${theAgeSite.name} Reader Listing`,
+    parse: parseTheAgeReader,
+    // 本体と同じく公開CORS経路の後にReaderへフォールバックし、最終的な成功経路も表示する。
+    allowTextProxy: theAgeSite.allowTextProxy !== false,
+    timeoutMs: theAgeSite.requestTimeoutMs,
+    requiredRoute: "text-proxy",
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  }] : []),
   {
     id: "loveracing_reader",
     name: "LOVERACING.NZ Reader Listing",
