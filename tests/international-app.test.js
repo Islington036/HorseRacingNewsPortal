@@ -15,8 +15,9 @@ async function run() {
   await testRateLimiterResponseCompatibility(harness);
   await testDirectRequestCachePolicy(harness);
   testFinalArticleUrlGate(harness);
+  await testSourceMetadataCacheMigration(harness);
 
-  console.log("international-app: 4 tests passed");
+  console.log("international-app: 5 tests passed");
 }
 
 // fetchのヘッダー受信後に本文が停止しても、同じAbortタイマーで打ち切れることを確認する。
@@ -149,6 +150,48 @@ function testFinalArticleUrlGate({ api, context }) {
   assert.equal(api.normalizeItem({ ...raw, url: "https://www.ttrausnz.com.au/edition/2026-09-05" }, ttrSite, 0), null);
 }
 
+// 記事分類・日時を変更した2媒体だけ旧キャッシュを除き、他媒体と新形式キャッシュを保持する。
+async function testSourceMetadataCacheMigration({ api, context }) {
+  const config = context.window.InternationalHorseRacingPortalDefinition.CONFIG;
+  const straight = config.SITES.find((site) => site.id === "thestraight");
+  const irish = config.SITES.find((site) => site.id === "irishracing");
+  assert.equal(new URL(straight.apiUrl).searchParams.get("categories_exclude"), "127");
+  assert.equal(straight.feedUrl, undefined);
+  assert.equal(straight.structuredSourcesOnly, true);
+  assert.equal(straight.exclusiveStructuredJson, true);
+  assert.equal(irish.sitemapUrl, undefined);
+  assert.equal(irish.textProxyOnly, true);
+
+  const now = new Date().toISOString();
+  let stored = JSON.stringify({
+    lastUpdatedAt: now,
+    siteLatest: { irishracing: now, thestraight: now, tdn_america: now },
+    allItems: [
+      { sourceId: "irishracing", url: "https://www.irishracing.com/news/example/267200" },
+      { sourceId: "thestraight", url: "https://thestraight.com.au/scenic-lodge-thoroughbred-stud/" },
+      { sourceId: "tdn_america", url: "https://www.thoroughbreddailynews.com/current-racing-news/" }
+    ].map((item) => ({ ...item, title: "A current headline", publishedAt: now }))
+  });
+  context.localStorage = { getItem: () => stored, setItem: (_key, value) => { stored = value; } };
+  api.loadCache();
+  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId), ["tdn_america"]);
+  assert.deepEqual(Object.keys(api.state.siteLatest), ["tdn_america"]);
+
+  // フィルターを無視したAPI応答でも専用判定が除外し、汎用JSON走査から復活しない。
+  context.fetch = async () => createTextResponse(JSON.stringify([
+    { title: { rendered: "Scenic Lodge Thoroughbred Stud" }, link: "https://thestraight.com.au/scenic-lodge-thoroughbred-stud/", date_gmt: now.replace(/\.\d{3}Z$/, ""), categories: [127], content: { rendered: "[![Photo](https://thestraight.com.au/photo.jpg) ## Scenic Lodge Thoroughbred Stud 10 September 2026](https://thestraight.com.au/scenic-lodge-thoroughbred-stud/)" } },
+    { title: { rendered: "Current racing news" }, link: "https://thestraight.com.au/current-racing-news/", date_gmt: now.replace(/\.\d{3}Z$/, ""), categories: [83] }
+  ]));
+  const items = await api.fetchSite(straight);
+  assert.equal(items.length, 1);
+  assert.match(items[0].url, /current-racing-news/);
+  api.state.allItems.push(...items);
+  api.saveCache();
+  assert.equal(JSON.parse(stored).sourceVersions.thestraight, straight.cacheVersion);
+  api.loadCache();
+  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId).sort(), ["tdn_america", "thestraight"]);
+}
+
 // 本体IIFEへテスト時だけ関数参照を差し込み、製品コードへtest-only公開APIを追加せず検証する。
 function loadAppHarness() {
   const source = fs.readFileSync(require.resolve("../international/app.js"), "utf8");
@@ -160,7 +203,10 @@ function loadAppHarness() {
       fetchProxyText,
       fetchSite,
       isCandidateArticleUrl,
-      normalizeItem
+      normalizeItem,
+      loadCache,
+      saveCache,
+      state
     };
   ${source.slice(iifeEnd)}`;
   const limiterState = { firstResponse: null };

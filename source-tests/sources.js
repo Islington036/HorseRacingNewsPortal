@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260905-review-followups";
+import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260911-source-metadata";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -8,6 +8,8 @@ const japaneseConfig = window.JapaneseHorseRacingPortalDefinition &&
 const racingComSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racing_com");
 const racingTvSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "racingtv");
 const theAgeSite = internationalConfig && internationalConfig.SITES.find((site) => site.id === "theage_racing");
+const irishRacingSite = internationalConfig.SITES.find((site) => site.id === "irishracing");
+const theStraightSite = internationalConfig.SITES.find((site) => site.id === "thestraight");
 const nikkanSite = japaneseConfig.SITES.find((site) => site.id === "nikkan");
 const sponichiSite = japaneseConfig.SITES.find((site) => site.id === "sponichi");
 const sanspoSite = japaneseConfig.SITES.find((site) => site.id === "sanspo");
@@ -20,6 +22,19 @@ const { extractSponichiReaderItems } = window.JapaneseHorseRacingSourceParsers;
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
 export const SOURCES = [
+  {
+    ...irishRacingSite,
+    id: "irishracing_reader",
+    name: "Irish Racing Reader（公開日時）",
+    parse: parseIrishRacingReader,
+    allowTextProxy: true,
+    timeoutMs: irishRacingSite.requestTimeoutMs,
+    requiredRoute: "text-proxy",
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 1
+  },
   ...(racingTvSite ? [{
     ...racingTvSite,
     id: "racingtv_reader",
@@ -486,16 +501,17 @@ export const SOURCES = [
     minimumImageCoverage: 0
   },
   {
+    ...theStraightSite,
     id: "the_straight_wordpress",
     name: "The Straight WordPress REST",
-    url: "https://thestraight.com.au/wp-json/wp/v2/posts?per_page=20&_embed=1",
-    baseUrl: "https://thestraight.com.au",
+    // 本体のBusiness Hub除外条件を共有し、API側の条件逸脱も同じ抽出器の入口で除く。
+    url: theStraightSite.apiUrl,
     parse: parseWordPressPosts,
     tryDirect: true,
     requireDate: true,
     minimumItems: 1,
-    // 現在の先頭記事にはfeatured_media未設定が含まれるため、存在する画像が全て読める50%を基準にする。
-    minimumImageCoverage: 0.5
+    // ニュースにもfeatured_media未設定がある。配信元画像なしはダミー表示とし、配信画像は全件読込を要求する。
+    minimumImageCoverage: 0
   },
   {
     id: "scmp_racing_rss",
