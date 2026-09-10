@@ -11,13 +11,18 @@
   } = window.HorseRacingPortalCore;
   const {
     extractRacenetReaderCards,
+    extractIrishRacingReaderItems,
     extractRacingTvReaderCards,
     extractTheAgeReaderItems,
     hasExplicitTimezone,
     isCandidateArticleUrl,
+    isAllowedWordPressPost,
     isTtrAusNzFixedPage,
     parseInternationalDate,
-    pickRacenetReaderTitle
+    parseIrishRacingDateTime,
+    pickRacenetReaderTitle,
+    readZonedParts: timeZoneParts,
+    zonedDateToUtc
   } = window.InternationalHorseRacingSourceParsers;
 
     const state = {
@@ -688,6 +693,11 @@
 
     const PARSERS = {
       generic(doc, site, rawText, data) {
+        // Irish Racingの一覧は専用抽出器だけで地域時刻を確定し、汎用抽出から端末時刻の候補を再混入させない。
+        if (site.id === "irishracing") return extractSiteSpecificItems(doc, site, rawText, data);
+        // 専用JSON抽出で除外した投稿を、本文内のMarkdownや埋込データから復活させない。
+        // RSS予備経路はdataがnullなので、従来どおり下のXML抽出へ進む。
+        if (site.exclusiveStructuredJson && data) return extractSiteSpecificItems(doc, site, rawText, data);
         return dedupeRawItems([
           ...extractSiteSpecificItems(doc, site, rawText, data),
           // カテゴリ分離を担う専用API抽出器がある媒体は、同じJSONを汎用走査へ二重投入しない。
@@ -1014,7 +1024,7 @@
     function extractWordPressApiItems(data, site) {
       const posts = Array.isArray(data) ? data : [];
 
-      return posts.map((post) => {
+      return posts.filter((post) => isAllowedWordPressPost(post, site)).map((post) => {
         const media = post && post._embedded && post._embedded["wp:featuredmedia"] && post._embedded["wp:featuredmedia"][0];
         const sizes = media && media.media_details && media.media_details.sizes ? media.media_details.sizes : {};
 
@@ -1124,37 +1134,6 @@
       }, timeZone);
     }
 
-    // Dateを指定タイムゾーンの年月日時分へ分解する。
-    function timeZoneParts(date, timeZone) {
-      const formatter = new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23"
-      });
-      return Object.fromEntries(
-        formatter.formatToParts(date)
-          .filter((part) => part.type !== "literal")
-          .map((part) => [part.type, Number(part.value)])
-      );
-    }
-
-    // 地域時刻を一度UTCと仮定し、その瞬間のタイムゾーン差を差し引いて絶対時刻へ変換する。
-    function zonedDateToUtc(parts, timeZone) {
-      const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute));
-      const represented = timeZoneParts(utcGuess, timeZone);
-      const representedAsUtc = Date.UTC(
-        represented.year,
-        represented.month - 1,
-        represented.day,
-        represented.hour,
-        represented.minute
-      );
-      return new Date(utcGuess.getTime() - (representedAsUtc - utcGuess.getTime()));
-    }
 
     // Irish Racingの一覧HTMLから日付見出しと時刻を組み合わせて記事を抽出する。
     function extractIrishRacingItems(doc, site) {
@@ -1187,100 +1166,9 @@
       return items;
     }
 
-    // Irish RacingのJina Reader Markdownから、日付見出し・記事見出し・時刻を組み合わせて抽出する。
+    // 本体と媒体別テスターで同じ一覧抽出器を使い、公開日時・画像・見出しの判定を揃える。
     function extractIrishRacingMarkdownItems(text, site) {
-      if (!text) return [];
-
-      const lines = String(text).split(/\r?\n/).map((line) => line.trim());
-      const items = [];
-      let currentDateHeader = "";
-      let lastImage = "";
-
-      lines.forEach((line, index) => {
-        // Jinaでは「Sat 16th May 2026」のような日付行が先に出て、その下に同日記事が並ぶ。
-        if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+20\d{2}$/i.test(line)) {
-          currentDateHeader = line;
-          lastImage = "";
-          return;
-        }
-
-        // 画像リンクは見出し行より前に出ることがあるため、直近画像として一時保存する。
-        const imageMatch = line.match(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/);
-        if (imageMatch) lastImage = imageMatch[1];
-
-        // 多くの記事は「[画像](記事URL)#### [タイトル](記事URL)」が1行に連結される。
-        // 通常のMarkdown見出しではないため、画像・URL・タイトルをこの専用正規表現でまとめて取り出す。
-        const inlineHeading = line.match(/^\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)/i);
-
-        // 最初のメイン記事だけは「[画像 ## タイトル 本文 時刻](記事URL)」という圧縮形になる。
-        // 本文まで同じ角括弧に入ってタイトル境界が曖昧なので、URLスラッグから見出しを復元する。
-        const compactHero = line.match(/^\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\s*#{2,6}\s*.+?\s+(\d{1,2}\.\d{2}\s*(?:AM|PM))\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)/i);
-
-        const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.irishracing\.com\/news\/[^)]+)\)/i);
-        if (!currentDateHeader) return;
-
-        let title = "";
-        let url = "";
-        let thumbnail = lastImage;
-        let timeText = "";
-
-        if (inlineHeading) {
-          thumbnail = inlineHeading[1];
-          title = inlineHeading[3];
-          url = inlineHeading[4] || inlineHeading[2];
-          timeText = findIrishRacingMarkdownTime(lines, index);
-        } else if (compactHero) {
-          thumbnail = compactHero[1];
-          url = compactHero[3];
-          title = titleFromIrishRacingUrl(url) || compactHero[3];
-          timeText = normalizeClockText(compactHero[2]);
-        } else if (heading) {
-          title = heading[1];
-          url = heading[2];
-          timeText = findIrishRacingMarkdownTime(lines, index);
-        } else {
-          return;
-        }
-
-        // 時刻は見出しの直後に出る場合と、短い本文を挟んで出る場合があるため、近傍だけを限定探索する。
-        const publishedAt = parseIrishRacingDateTime(currentDateHeader, timeText);
-        if (!publishedAt) return;
-
-        items.push({
-          title: cleanTitle(title),
-          url,
-          publishedAt,
-          thumbnail,
-          source: site.name
-        });
-      });
-
-      return items;
-    }
-
-    // Irish Racing Markdown内で、記事見出しに紐づく時刻表記を近傍から探す。
-    function findIrishRacingMarkdownTime(lines, index) {
-      for (let offset = 0; offset <= 6; offset += 1) {
-        const line = lines[index + offset] || "";
-        const match = line.match(/\b\d{1,2}\.\d{2}\s*(?:AM|PM)\b/i);
-        if (match) return normalizeClockText(match[0]);
-      }
-      return "";
-    }
-
-    // Irish Racingの記事URLは /news/slug/id 形式なので、通常の「末尾slug」抽出ではIDだけになる。
-    function titleFromIrishRacingUrl(url) {
-      try {
-        const parts = new URL(url).pathname.split("/").filter(Boolean);
-        const slug = parts.length >= 3 ? parts[parts.length - 2] : "";
-        return cleanTitle(
-          decodeURIComponent(slug)
-            .replace(/[-_]+/g, " ")
-            .replace(/\b([a-z])/g, (match) => match.toUpperCase())
-        );
-      } catch (_error) {
-        return "";
-      }
+      return extractIrishRacingReaderItems(text).map((item) => ({ ...item, source: site.name }));
     }
 
     // Irish Racingで記事カードの直前にある日付見出しをさかのぼって探す。
@@ -1296,13 +1184,6 @@
       return "";
     }
 
-    // Irish Racing専用の日付見出しと時刻を結合し、Dateへ変換する。
-    function parseIrishRacingDateTime(dateHeader, timeText) {
-      if (!dateHeader || !timeText) return null;
-      // dateHeaderは「Sat 16th May 2026」、timeTextは「6:08 PM」へ正規化済みの想定。
-      // parseDate側で曜日と序数サフィックスを処理できるため、ここでは結合だけに留める。
-      return parseDate(`${dateHeader} ${normalizeClockText(timeText)}`);
-    }
 
     // 12.30 PMのような時刻表記を、Date解析しやすい形式へ整える。
     function normalizeClockText(value) {
@@ -3102,6 +2983,8 @@
           JSON.stringify({
             lastUpdatedAt: state.lastUpdatedAt && state.lastUpdatedAt.toISOString(),
             siteLatest: state.siteLatest,
+            // 取得仕様の変わった媒体だけを無効化できるよう、全体キャッシュとは別に版を保存する。
+            sourceVersions: Object.fromEntries(CONFIG.SITES.map((site) => [site.id, site.cacheVersion || 0])),
             allItems: state.allItems.map((item) => ({
               ...item,
               publishedAt: item.publishedAt.toISOString()
@@ -3119,11 +3002,16 @@
         const cached = JSON.parse(localStorage.getItem(CONFIG.CACHE_KEY) || "null");
         if (!cached || !Array.isArray(cached.allItems)) return;
 
+        // 日時・記事分類を修正した媒体の古いデータだけを除き、無関係な媒体の成功キャッシュは保持する。
+        const staleSourceIds = new Set(CONFIG.SITES
+          .filter((site) => (cached.sourceVersions?.[site.id] || 0) !== (site.cacheVersion || 0))
+          .map((site) => site.id));
+
         state.allItems = cached.allItems
           .map((item) => {
             const site = CONFIG.SITES.find((entry) => entry.id === item.sourceId);
             // 取得対象から削除した媒体（例: news.com.au）は、古いキャッシュに残っていても表示へ戻さない。
-            if (!site) return null;
+            if (!site || staleSourceIds.has(site.id)) return null;
             const url = absoluteUrl(item.url, site.baseUrl);
             // 古いキャッシュも現在のURL規則で再検証し、外部リンクや固定ページを表示へ戻さない。
             if (!isCandidateArticleUrl(url, site)) return null;
@@ -3140,7 +3028,8 @@
           .filter((item) => !Number.isNaN(item.publishedAt.getTime()))
           .filter(isWithinMaxWindow)
           .sort((a, b) => b.publishedAt - a.publishedAt);
-        state.siteLatest = cached.siteLatest && typeof cached.siteLatest === "object" ? cached.siteLatest : {};
+        state.siteLatest = Object.fromEntries(Object.entries(cached.siteLatest || {})
+          .filter(([sourceId]) => !staleSourceIds.has(sourceId)));
         const lastUpdatedAt = cached.lastUpdatedAt ? new Date(cached.lastUpdatedAt) : null;
         // 壊れた保存値をIntl.DateTimeFormatへ渡すと初期描画が止まるため、無効日時は未更新へ戻す。
         state.lastUpdatedAt = lastUpdatedAt && !Number.isNaN(lastUpdatedAt.getTime()) ? lastUpdatedAt : null;
