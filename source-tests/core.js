@@ -11,11 +11,20 @@ const portalConfig = window.InternationalHorseRacingPortalDefinition
   ? window.InternationalHorseRacingPortalDefinition.CONFIG
   : {};
 const {
+  extractIrishRacingReaderItems,
   extractRacingTvReaderCards,
   extractTheAgeReaderItems,
   isCandidateArticleUrl,
-  parseInternationalDate
+  isAllowedWordPressPost,
+  parseInternationalDate,
+  readZonedParts: timeZoneParts,
+  zonedDateToUtc
 } = window.InternationalHorseRacingSourceParsers;
+
+// Irish Racingの公開日時は一覧の地域時計を正本にし、本体と同じDST対応抽出器で検証する。
+export function parseIrishRacingReader(text) {
+  return extractIrishRacingReaderItems(text);
+}
 
 // 媒体専用テストも本体と同じReader公開枠を消費するため、開始間隔と429再試行設定を共有する。
 const textProxyRateLimiter = createRequestRateLimiter({
@@ -620,41 +629,9 @@ function parseRelativeDateInTimeZone(value, timeZone) {
     day: calendarDate.getUTCDate(),
     hour,
     minute: Number(match[3])
-  }, timeZone).toISOString();
+  }, timeZone)?.toISOString() || "";
 }
 
-// Dateを指定タイムゾーンの年月日時分へ分解する。
-function timeZoneParts(date, timeZone) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  });
-  const parts = Object.fromEntries(
-    formatter.formatToParts(date)
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, Number(part.value)])
-  );
-  return parts;
-}
-
-// 指定タイムゾーンの壁時計をUTCへ変換する。初回推定時刻の地域差を差し引いて実時刻を得る。
-function zonedDateToUtc(parts, timeZone) {
-  const utcGuess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute));
-  const represented = timeZoneParts(utcGuess, timeZone);
-  const representedAsUtc = Date.UTC(
-    represented.year,
-    represented.month - 1,
-    represented.day,
-    represented.hour,
-    represented.minute
-  );
-  return new Date(utcGuess.getTime() - (representedAsUtc - utcGuess.getTime()));
-}
 
 // Jina Readerの記事出力から、ページタイトル・公開日時・最初の実写真を抽出する。
 function parseReaderArticle(text, articleUrl) {
@@ -735,11 +712,15 @@ export function parseAtom(text) {
 }
 
 // WordPress RESTの埋込featured mediaから、一覧カードに適した画像サイズを優先して選ぶ。
-export function parseWordPressPosts(text) {
+export function parseWordPressPosts(text, source) {
   const posts = JSON.parse(text);
   if (!Array.isArray(posts)) throw new Error("WordPress RESTの投稿配列を取得できませんでした");
 
-  return posts.map((post) => {
+  return posts.filter((post) => isAllowedWordPressPost(post, source)).map((post) => {
+    // WordPressの装飾HTML・購読バッジは、本体と同じ不活性template内で除いて見出しだけを表示する。
+    const titleTemplate = document.createElement("template");
+    titleTemplate.innerHTML = String(post && post.title && post.title.rendered || "");
+    titleTemplate.content.querySelectorAll("script, style, .sponsor-badge").forEach((element) => element.remove());
     const media = post && post._embedded && post._embedded["wp:featuredmedia"]
       ? post._embedded["wp:featuredmedia"][0]
       : null;
@@ -748,7 +729,7 @@ export function parseWordPressPosts(text) {
       : {};
 
     return {
-      title: decodeHtml(post && post.title && post.title.rendered),
+      title: titleTemplate.content.textContent || "",
       url: post && post.link,
       publishedAt: post && post.date_gmt ? `${post.date_gmt}Z` : post && post.date,
       thumbnail: firstValue(
@@ -1022,6 +1003,8 @@ function absoluteUrl(value, baseUrl) {
 // サイトマップ共有時に、設定されたURL断片へ一致する記事だけをテスト対象にする。
 function matchesSourcePath(value, source) {
   if (!value) return false;
+  // トップ階層に記事を置く媒体はpathHintsだけで弾かず、本体のホスト・固定ページ判定まで共有する。
+  if (source.includeAnySameHost) return isCandidateArticleUrl(value, source);
 
   let parsed;
   try {
