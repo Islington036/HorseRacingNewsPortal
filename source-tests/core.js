@@ -271,12 +271,10 @@ export function parseFeed(text, source) {
   }).filter(Boolean);
 }
 
-// Racing TVのReaderカードを共有抽出器で読み、日時が確定した記事だけを本体と同じ条件で返す。
+// Racing TV一覧の相対日時はReaderキャッシュでずれるため、先頭を含め記事詳細の公開日時で確定する。
 export async function parseRacingTvReader(text, source) {
-  // 同じ一覧の相対時刻は一つの基準時刻から計算し、処理中のミリ秒差で新着順判定が逆転しないようにする。
-  const nowMs = Date.now();
   const candidates = extractRacingTvReaderCards(text)
-    .map((item) => ({ ...item, publishedAt: parseInternationalDate(item.publishedAt, nowMs) }))
+    .map((item) => ({ ...item, publishedAt: null }))
     .filter((item) => isCandidateArticleUrl(item.url, source));
   // 本体の上限・並列数で既存Reader補完を使い、一覧に時刻のないカードも正確な公開日時へ結び付ける。
   const hydrated = await hydrateItemsFromReader(candidates, {

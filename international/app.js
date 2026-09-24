@@ -459,6 +459,10 @@
         rawItems = await decorateRawItemsFromReader(rawItems, site);
       }
       if (site.readerDetailHydration) {
+        if (site.id === "racingtv") {
+          // 汎用Markdown抽出から復活した一覧日時もReaderキャッシュでずれる。全候補を詳細の正式日時で上書きする。
+          rawItems = rawItems.map((item) => ({ ...item, publishedAt: null }));
+        }
         rawItems = await hydrateReaderDetailItems(rawItems, site);
       }
       return dedupeByUrl(
@@ -1354,13 +1358,11 @@
       return items;
     }
 
-    // Racing TVのReader一覧から記事候補を作る。日時欠落は後段で記事詳細のPublished Timeから補完する。
+    // Racing TV一覧の「○分前」はReaderキャッシュの経過でずれるため、全候補を記事詳細のPublished Timeで確定する。
     function extractRacingTvMarkdownItems(text, site) {
       if (!text) return [];
 
       const items = [];
-      // 同じReader一覧にある相対時刻は一つの取得基準時刻から計算し、ミリ秒差による並び順の逆転を防ぐ。
-      const nowMs = Date.now();
 
       for (const card of extractRacingTvReaderCards(text)) {
         const url = card.url;
@@ -1369,8 +1371,8 @@
         items.push({
           title: cleanTitle(card.title),
           url,
-          // 一覧に日時がないカードも残す。補完に失敗すれば正規化時に除外し、推定日時は付けない。
-          publishedAt: parseInternationalDate(card.publishedAt, nowMs) || parseDateFromUrl(url),
+          // 一覧の相対日時もURL中の日付も使わない。詳細取得に失敗すれば正規化時に除外する。
+          publishedAt: null,
           thumbnail: card.thumbnail,
           source: site.name
         });
