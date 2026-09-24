@@ -54,6 +54,10 @@
           name: "東スポ競馬",
           url: "https://tospo-keiba.jp/news",
           sitemapUrl: "https://tospo-keiba.jp/sitemap_news_1.xml",
+          // Readerが配信元から拒否された場合だけ、CORS対応のMIT公開変換サービスで公式Sitemap本文を読む。
+          sitemapTextFallbackUrl:
+            "https://urltomarkdown.herokuapp.com/?url=" +
+            encodeURIComponent("https://tospo-keiba.jp/sitemap_news_1.xml"),
           readerListingUrls: [
             "https://tospo-keiba.jp/news",
             "https://tospo-keiba.jp/news?page=2"

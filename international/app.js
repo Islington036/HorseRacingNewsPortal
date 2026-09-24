@@ -1354,35 +1354,23 @@
       return items;
     }
 
-    // Racing TVのJina Reader一覧Markdownから、APIが使えない場合の予備記事候補を作る。
+    // Racing TVのReader一覧から記事候補を作る。日時欠落は後段で記事詳細のPublished Timeから補完する。
     function extractRacingTvMarkdownItems(text, site) {
       if (!text) return [];
 
       const items = [];
-      let undatedCount = 0;
       // 同じReader一覧にある相対時刻は一つの取得基準時刻から計算し、ミリ秒差による並び順の逆転を防ぐ。
       const nowMs = Date.now();
 
       for (const card of extractRacingTvReaderCards(text)) {
         const url = card.url;
-        let publishedAt = parseInternationalDate(card.publishedAt, nowMs) || parseDateFromUrl(url);
-        let dateEstimated = false;
-
-        if (!publishedAt && CONFIG.ALLOW_UNDATED_LATEST_ITEMS && undatedCount < CONFIG.UNDATED_ITEMS_PER_SITE) {
-          // Racing TVのJina出力は先頭カード以外の相対時刻を省略することがある。
-          // 最新一覧の上位カードだけ現在時刻から少しずつずらして仮配置し、0件扱いになるのを避ける。
-          publishedAt = estimateDateForUndatedItem(undatedCount);
-          dateEstimated = true;
-          undatedCount += 1;
-        }
-
-        if (!publishedAt || !isCandidateArticleUrl(url, site)) continue;
+        if (!isCandidateArticleUrl(url, site)) continue;
 
         items.push({
           title: cleanTitle(card.title),
           url,
-          publishedAt,
-          dateEstimated,
+          // 一覧に日時がないカードも残す。補完に失敗すれば正規化時に除外し、推定日時は付けない。
+          publishedAt: parseInternationalDate(card.publishedAt, nowMs) || parseDateFromUrl(url),
           thumbnail: card.thumbnail,
           source: site.name
         });

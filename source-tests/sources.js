@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260911-source-metadata";
+import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260925-source-order-2";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -13,6 +13,7 @@ const theStraightSite = internationalConfig.SITES.find((site) => site.id === "th
 const nikkanSite = japaneseConfig.SITES.find((site) => site.id === "nikkan");
 const sponichiSite = japaneseConfig.SITES.find((site) => site.id === "sponichi");
 const sanspoSite = japaneseConfig.SITES.find((site) => site.id === "sanspo");
+const tospoSite = japaneseConfig.SITES.find((site) => site.id === "tospo");
 const mirrorRacingSite = internationalConfig.SITES.find((site) => site.id === "mirror_racing");
 const scmpRacingSite = internationalConfig.SITES.find((site) => site.id === "scmp_racing");
 const thoroughbredRacingRss = "https://www.thoroughbredracing.com/rss.xml";
@@ -219,7 +220,8 @@ export const SOURCES = [
     tryDirect: true,
     requiredRoute: "direct",
     requireDate: true,
-    minimumItems: 1,
+    // Breeding同様、正常なRSS応答に当該カテゴリがない場合は0件成功とする。
+    minimumItems: 0,
     minimumImageCoverage: 0
   },
   {
@@ -282,33 +284,30 @@ export const SOURCES = [
   {
     id: "tospo_news_sitemap",
     name: "東スポ競馬 News Sitemap",
-    url: "https://tospo-keiba.jp/sitemap_news_1.xml",
+    url: tospoSite.sitemapUrl,
+    sitemapTextFallbackUrl: tospoSite.sitemapTextFallbackUrl,
     baseUrl: "https://tospo-keiba.jp",
     allowedOrigins: ["https://tospo-keiba.jp"],
     pathPrefixes: ["/breaking_news/"],
-    parse: parseNewsSitemap,
+    parse: parseTospoNewsSitemap,
     allowTextProxy: true,
     preferTextProxy: true,
-    readerDecorationUrls: [
-      "https://tospo-keiba.jp/news",
-      "https://tospo-keiba.jp/news?page=2"
-    ],
+    textProxyOnly: true,
+    readerDecorationUrls: tospoSite.readerListingUrls,
     parseReaderDecoration: parseTospoReaderCards,
     decorationImagePattern: /\/images\/article\/thumbnail\//i,
     decorationImageOrigins: ["https://tospo-keiba.jp"],
     readerCacheBust: true,
-    hydrateFromReader: true,
-    disableReaderImageFallback: true,
     // 東スポのサイトマップは通常20件弱なので、既定8件で打ち切らず2ページ目の記事まで結合を検証する。
     maxItems: 20,
-    hydrationLimit: 20,
-    hydrationConcurrency: 2,
     hydrationTimeoutMs: 20000,
     // 最新Readerの一時失敗時は通常キャッシュを試し、本体と同じ退避経路を検証する。
     readerCacheFallback: true,
     requireDate: true,
+    requireDescendingDates: true,
     minimumItems: 1,
-    minimumImageCoverage: 1
+    // 一覧Readerが取得不能なら本体はダミー画像を出す。配信画像がある場合の読込成功は共通判定で必須。
+    minimumImageCoverage: 0
   },
   ...(racingComSite ? [{
     id: "racing_com_graphql",
