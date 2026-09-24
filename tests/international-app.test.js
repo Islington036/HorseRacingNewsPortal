@@ -14,10 +14,11 @@ async function run() {
   await testResponseBodyTimeout(harness);
   await testRateLimiterResponseCompatibility(harness);
   await testDirectRequestCachePolicy(harness);
+  await testRacingTvDetailDates(harness);
   testFinalArticleUrlGate(harness);
   await testSourceMetadataCacheMigration(harness);
 
-  console.log("international-app: 5 tests passed");
+  console.log("international-app: 6 tests passed");
 }
 
 // fetchのヘッダー受信後に本文が停止しても、同じAbortタイマーで打ち切れることを確認する。
@@ -120,6 +121,42 @@ async function testDirectRequestCachePolicy({ context, api }) {
   assert.equal(proxyCalls.length, 1);
   assert.match(proxyCalls[0].url, /^https:\/\/proxy\.test\//);
   assert.equal(Object.prototype.hasOwnProperty.call(proxyCalls[0].options, "cache"), false);
+}
+
+// 一覧に日時がないRacing TVカードは記事詳細の公開時刻だけで補完し、時刻不明は表示しない。
+async function testRacingTvDetailDates({ context, api }) {
+  const site = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES
+    .find((entry) => entry.id === "racingtv");
+  assert.equal(site.readerDetailHydration, true);
+  assert.equal(site.detailHydrationLimit, site.maxItems);
+
+  const listing = [
+    "[![Image](https://images.example/first.webp) First proper racing headline 1 hour ago Read More](https://www.racingtv.com/news/first-proper-racing-headline)",
+    "[![Image](https://images.example/second.webp) Second proper racing headline](https://www.racingtv.com/news/second-proper-racing-headline)",
+    "[![Image](https://images.example/third.webp) Third proper racing headline](https://www.racingtv.com/news/third-proper-racing-headline)"
+  ].join("\n");
+  const detailDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const fetched = [];
+  context.fetch = async (url) => {
+    fetched.push(url);
+    if (url.endsWith("/news/latest")) return createTextResponse(listing);
+    if (url.endsWith("/news/second-proper-racing-headline")) {
+      return createTextResponse(`Title: Second proper racing headline\nPublished Time: ${detailDate}\n`);
+    }
+    if (url.endsWith("/news/third-proper-racing-headline")) {
+      return createTextResponse("Title: Third proper racing headline\n");
+    }
+    throw new Error(`予期しないReader要求: ${url}`);
+  };
+
+  const items = await api.fetchSite(site);
+  assert.equal(items.length, 2);
+  assert.ok(items.some((item) => item.url.endsWith("/news/first-proper-racing-headline")));
+  const second = items.find((item) => item.url.endsWith("/news/second-proper-racing-headline"));
+  assert.equal(second.publishedAt.toISOString(), detailDate);
+  assert.equal(second.thumbnail, "https://images.example/second.webp");
+  assert.equal(second.dateEstimated, false);
+  assert.equal(fetched.length, 3, "一覧日時のある記事は詳細を再取得しない");
 }
 
 // 抽出器が候補を返しても、外部ホスト・固定ページ・HTTP(S)以外は最終正規化で除外する。

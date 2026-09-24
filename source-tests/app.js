@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20260911-source-metadata";
-import { SOURCES } from "./sources.js?v=20260911-source-metadata";
+import { runSourceTest } from "./core.js?v=20260925-source-order-2";
+import { SOURCES } from "./sources.js?v=20260925-source-order-2";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),

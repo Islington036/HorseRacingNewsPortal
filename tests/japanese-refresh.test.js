@@ -318,6 +318,55 @@ async function testSanspoFiltersMemberPagesBeforeHydrationLimit() {
   assert.ok(basicUrls.every((url) => requestedUrls.every((requested) => !requested.includes(encodeURIComponent(url)))));
 }
 
+async function testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(readerText = "Title: エラー\nただいまアクセスが集中しています") {
+  class ErrorDomParser {
+    parseFromString() {
+      return {
+        querySelector(selector) { return selector === "parsererror" ? {} : null; }
+      };
+    }
+  }
+
+  const site = {
+    id: "tospo",
+    name: "東スポ競馬",
+    url: "https://tospo-keiba.jp/news",
+    sitemapUrl: "https://tospo-keiba.jp/sitemap_news_1.xml",
+    sitemapTextFallbackUrl: "https://fallback.example/tospo-sitemap",
+    readerListingUrls: [],
+    baseUrl: "https://tospo-keiba.jp",
+    readerCacheBust: true
+  };
+  const harness = createHarness(null, {
+    DOMParser: ErrorDomParser,
+    sites: [site],
+    configure(config) {
+      config.TEXT_PROXY_MIN_INTERVAL_MS = 0;
+      config.TEXT_PROXY_RETRY_LIMIT = 0;
+      config.TEXT_PROXY = (url) => `https://reader.example/${encodeURIComponent(url)}`;
+    },
+    fetch(url) {
+      if (url.startsWith("https://reader.example/")) {
+        return Promise.resolve(createResponseText(readerText));
+      }
+      if (url === site.sitemapTextFallbackUrl) {
+        return Promise.resolve(createResponseText(
+          "https://tospo-keiba.jp/breaking\\_news/75702 東スポ競馬 ja " +
+          `${new Date().toISOString()} フォールバックで取得した公式見出し`
+        ));
+      }
+      return Promise.reject(new Error(`unexpected request: ${url}`));
+    }
+  });
+
+  await harness.portal.refresh();
+
+  assert.equal(harness.portal.getSnapshot().itemCount, 1);
+  assert.equal(harness.portal.getSnapshot().errorCount, 0);
+  assert.match(harness.elements.get("#newsList").innerHTML, /フォールバックで取得した公式見出し/);
+  assert.match(harness.elements.get("#newsList").innerHTML, /class="thumb thumb-fallback"/, "一覧Readerが失敗した記事は共通ダミー画像を表示する");
+}
+
 function createResponseText(text) {
   return {
     headers: { get() { return null; } },
@@ -332,8 +381,10 @@ async function run() {
   await testAllFailuresPreserveCacheTimestamp();
   testInvalidCachedTimestampIsIgnored();
   await testSanspoFiltersMemberPagesBeforeHydrationLimit();
+  await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards();
+  await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards("[article](https://tospo-keiba.jp/breaking_news/75702)");
   await testSourceDetailsKeepFailuresVisible();
-  console.log("japanese-refresh: 5 tests passed");
+  console.log("japanese-refresh: 7 tests passed");
 }
 
 run().catch((error) => {
