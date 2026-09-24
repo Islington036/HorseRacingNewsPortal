@@ -123,7 +123,7 @@ async function testDirectRequestCachePolicy({ context, api }) {
   assert.equal(Object.prototype.hasOwnProperty.call(proxyCalls[0].options, "cache"), false);
 }
 
-// 一覧に日時がないRacing TVカードは記事詳細の公開時刻だけで補完し、時刻不明は表示しない。
+// キャッシュされた一覧の相対日時を信じず、先頭を含め記事詳細の正式な公開時刻だけを使う。
 async function testRacingTvDetailDates({ context, api }) {
   const site = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES
     .find((entry) => entry.id === "racingtv");
@@ -133,30 +133,44 @@ async function testRacingTvDetailDates({ context, api }) {
   const listing = [
     "[![Image](https://images.example/first.webp) First proper racing headline 1 hour ago Read More](https://www.racingtv.com/news/first-proper-racing-headline)",
     "[![Image](https://images.example/second.webp) Second proper racing headline](https://www.racingtv.com/news/second-proper-racing-headline)",
-    "[![Image](https://images.example/third.webp) Third proper racing headline](https://www.racingtv.com/news/third-proper-racing-headline)"
+    "[![Image](https://images.example/third.webp) Third proper racing headline](https://www.racingtv.com/news/third-proper-racing-headline)",
+    "## [Alternate proper racing headline](https://www.racingtv.com/news/alternate-proper-racing-headline)",
+    "September 24, 2026",
+    "![Image](https://images.example/alternate.webp)"
   ].join("\n");
-  const detailDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const firstDetailDate = "2026-09-24T17:10:00+01:00";
+  const secondDetailDate = "2026-09-24T16:33:55+01:00";
   const fetched = [];
   context.fetch = async (url) => {
     fetched.push(url);
     if (url.endsWith("/news/latest")) return createTextResponse(listing);
+    if (url.endsWith("/news/first-proper-racing-headline")) {
+      return createTextResponse(`Title: First proper racing headline\nPublished Time: ${firstDetailDate}\n`);
+    }
     if (url.endsWith("/news/second-proper-racing-headline")) {
-      return createTextResponse(`Title: Second proper racing headline\nPublished Time: ${detailDate}\n`);
+      return createTextResponse(`Title: Second proper racing headline\nPublished Time: ${secondDetailDate}\n`);
     }
     if (url.endsWith("/news/third-proper-racing-headline")) {
       return createTextResponse("Title: Third proper racing headline\n");
+    }
+    if (url.endsWith("/news/alternate-proper-racing-headline")) {
+      // 汎用Markdownが日付を拾っても、詳細に正式日時がなければ掲載しない。
+      return createTextResponse("Title: Alternate proper racing headline\n");
     }
     throw new Error(`予期しないReader要求: ${url}`);
   };
 
   const items = await api.fetchSite(site);
   assert.equal(items.length, 2);
-  assert.ok(items.some((item) => item.url.endsWith("/news/first-proper-racing-headline")));
+  const first = items.find((item) => item.url.endsWith("/news/first-proper-racing-headline"));
   const second = items.find((item) => item.url.endsWith("/news/second-proper-racing-headline"));
-  assert.equal(second.publishedAt.toISOString(), detailDate);
+  assert.equal(first.publishedAt.toISOString(), "2026-09-24T16:10:00.000Z");
+  assert.equal(second.publishedAt.toISOString(), "2026-09-24T15:33:55.000Z");
+  assert.equal(first.thumbnail, "https://images.example/first.webp");
   assert.equal(second.thumbnail, "https://images.example/second.webp");
+  assert.equal(first.dateEstimated, false);
   assert.equal(second.dateEstimated, false);
-  assert.equal(fetched.length, 3, "一覧日時のある記事は詳細を再取得しない");
+  assert.equal(fetched.length, 5, "相対日時付き先頭と汎用Markdown候補も記事詳細を取得する");
 }
 
 // 抽出器が候補を返しても、外部ホスト・固定ページ・HTTP(S)以外は最終正規化で除外する。
