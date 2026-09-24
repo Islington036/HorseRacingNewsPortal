@@ -13,7 +13,11 @@
     setUrlQueryParameter,
     stripTrailingSourceName
   } = window.HorseRacingPortalCore;
-  const { extractSponichiReaderItems } = window.JapaneseHorseRacingSourceParsers;
+  const {
+    extractSponichiReaderItems,
+    extractTospoReaderCards,
+    extractTospoSitemapTextItems
+  } = window.JapaneseHorseRacingSourceParsers;
 
     const TITLE_SOURCE_NAMES = Object.freeze([
       "スポーツ報知",
@@ -355,21 +359,37 @@
     // 東スポ競馬のサイトマップと一覧カードを統合し、記事だけを返す。
     // サイトマップに存在しない固定ページやランキングリンクは、一覧に出ていても採用しない。
     async function fetchTospoStructuredItems(site) {
-      const sitemapText = await fetchReaderText(site.sitemapUrl, site.readerCacheBust);
-      const sitemapItems = extractTospoSitemapItems(sitemapText, site);
+      let sitemapItems = [];
+      try {
+        const sitemapText = await fetchReaderText(site.sitemapUrl, site.readerCacheBust);
+        sitemapItems = extractTospoSitemapItems(sitemapText, site);
+      } catch (_error) {
+        // Reader側の取得拒否や一時障害は、下の公式Sitemap専用フォールバックへ委ねる。
+      }
+
+      const missingSitemapMetadata = sitemapItems.length === 0 || sitemapItems.some((item) =>
+        !item.title || !item.publishedAt || !Number.isFinite(new Date(item.publishedAt).getTime())
+      );
+      if (missingSitemapMetadata && site.sitemapTextFallbackUrl) {
+        try {
+          const fallbackText = await fetchProxyText(site.sitemapTextFallbackUrl, CONFIG.REQUEST_TIMEOUT_MS);
+          const fallbackItems = extractTospoSitemapItems(fallbackText, site);
+          if (fallbackItems.length > 0) sitemapItems = fallbackItems;
+        } catch (error) {
+          // URLだけ得られた候補も保持し、予備経路の障害時は既存の一覧補完を続ける。
+          if (sitemapItems.length === 0) throw error;
+        }
+      }
       if (sitemapItems.length === 0) {
         throw new Error(t("noExtract"));
       }
 
-      // 一覧の片方が一時的に失敗しても、取得できたページのカードだけで更新を継続する。
-      // ただし両方とも失敗した場合は、日時を持たないReaderサイトマップだけでは表示できないため失敗扱いにする。
+      // 一覧の片方が一時的に失敗しても、取得できたページのカードだけで画像を補完する。
+      // 両方とも失敗した場合は、公式Sitemapの見出し・日時を維持し、共通ダミー画像で表示を継続する。
       const listingResults = await Promise.allSettled(
         site.readerListingUrls.map((url) => fetchTospoReaderListingItems(url, site))
       );
       const listingItems = listingResults.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-      if (listingItems.length === 0) {
-        throw new Error(t("noExtract"));
-      }
 
       const listingByUrl = new Map();
       listingItems.forEach((item) => {
@@ -410,7 +430,7 @@
 
       for (const cacheBust of cacheBustModes) {
         try {
-          const items = extractTospoReaderCards(await fetchReaderText(url, cacheBust), site);
+          const items = extractTospoReaderCards(await fetchReaderText(url, cacheBust));
           if (items.length > 0) return items;
           // HTTP 200でもReader本文が空・構造変化中なら、次のcached Readerを試す。
           lastError = new Error(t("noExtract"));
@@ -511,8 +531,8 @@
       return fetchProxyText(CONFIG.TEXT_PROXY(freshUrl), CONFIG.TITLE_HYDRATION_TIMEOUT_MS);
     }
 
-    // Google News Sitemapの生XMLと、ReaderがMarkdown化したURL一覧の両方へ対応する。
-    // Reader経路では見出し・日時が失われるため空欄のまま返し、一覧カードとの完全URL一致で補完する。
+    // Google News Sitemapの生XML、ReaderのURL一覧、CORS対応変換サービスの平文へ対応する。
+    // 平文フォールバックにも公式の見出しと日時があるため、一覧Readerが失敗してもダミー画像で表示を継続できる。
     function extractTospoSitemapItems(text, site) {
       const doc = new DOMParser().parseFromString(text, "application/xml");
       if (!doc.querySelector("parsererror")) {
@@ -525,6 +545,10 @@
         })).filter((item) => isTospoBreakingNewsUrl(item.url));
       }
 
+      const textItems = extractTospoSitemapTextItems(text)
+        .map((item) => ({ ...item, source: site.name }));
+      if (textItems.length > 0) return textItems;
+
       const urls = [...String(text || "").matchAll(/\[[^\]]*\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)[^)]*\)/gi)]
         .map((match) => match[1]);
       return [...new Set(urls)].map((url) => ({
@@ -534,40 +558,6 @@
         thumbnail: "",
         source: site.name
       }));
-    }
-
-    // Reader一覧のカード行から、完全見出し・記事URL・記事画像と、そのカード直後にある日時を抽出する。
-    // origin+pathnameが同じ二つの記事リンクを持つ行だけをカードと認め、広告やランキング画像を除外する。
-    function extractTospoReaderCards(text, site) {
-      const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
-      const items = [];
-
-      lines.forEach((line, index) => {
-        const card = line.match(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)(?:!\[[^\]]*\]\([^)]+\))?\s*\[([^\]]+)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)/i);
-        if (!card || canonicalArticleUrl(card[2]) !== canonicalArticleUrl(card[4])) return;
-        if (!/\/images\/article\/thumbnail\//i.test(card[1])) return;
-
-        // Readerでは日時がカード行の後ろへ並ぶ。次の記事カードより前、かつ最大7行だけを探索することで、
-        // 隣の記事の日時を誤って流用することを防ぐ。
-        const nextCardOffset = lines
-          .slice(index + 1)
-          .findIndex((value) => /tospo-keiba\.jp\/breaking_news\/\d+/i.test(value));
-        const endIndex = nextCardOffset === -1 ? index + 8 : index + 1 + nextCardOffset;
-        const nearby = lines.slice(index + 1, Math.min(endIndex, index + 8));
-        const date = nearby.find((value) => /^20\d{2}\/\d{1,2}\/\d{1,2}$/.test(value));
-        const time = nearby.find((value) => /^\d{1,2}:\d{2}$/.test(value));
-        if (!date || !time) return;
-
-        items.push({
-          title: card[3],
-          url: card[4],
-          publishedAt: parseDate(`${date} ${time}`),
-          thumbnail: absoluteUrl(card[1], site.baseUrl),
-          source: site.name
-        });
-      });
-
-      return items;
     }
 
     function isTospoBreakingNewsUrl(value) {

@@ -39,6 +39,7 @@ const PROXY_BUILDERS = [
   ...(portalConfig.CORS_PROXY_FALLBACKS || [])
 ].filter((buildUrl) => typeof buildUrl === "function");
 const TEXT_PROXY = portalConfig.TEXT_PROXY;
+const { extractTospoReaderCards, extractTospoSitemapTextItems } = window.JapaneseHorseRacingSourceParsers;
 
 // 指定された媒体1件を取得し、記事データと画像の実読込結果をまとめて返す。
 export async function runSourceTest(source) {
@@ -55,11 +56,14 @@ export async function runSourceTest(source) {
     : decoratedItems;
   const items = parsedItems
     .map((item) => normalizeItem(item, source))
-    .filter(Boolean)
-    .slice(0, source.maxItems || DEFAULT_MAX_ITEMS);
+    .filter(Boolean);
+  // 東スポSitemapは一覧から日時を補完した後に並べ替え、本体のカード表示と新着順を揃える。
+  if (source.sitemapTextFallbackUrl) {
+    items.sort((left, right) => right.publishedAt - left.publishedAt);
+  }
 
   // URL文字列の存在だけでは、403やホットリンク制限を検出できないため、実際にimgとして読み込む。
-  const checkedItems = await Promise.all(items.map(async (item) => ({
+  const checkedItems = await Promise.all(items.slice(0, source.maxItems || DEFAULT_MAX_ITEMS).map(async (item) => ({
     ...item,
     imageLoaded: await canLoadImage(item.thumbnail, source.imageTimeoutMs)
   })));
@@ -143,8 +147,13 @@ async function fetchAndParseSource(source) {
     // ReaderではXMLのタイトル・日時・画像が失われるため、後段のhydrateItemsFromReaderで記事詳細を補う。
     candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
+  // 東スポ本体と同じく、Readerが公式Sitemapを読めない場合だけ平文変換経路へ進む。
+  if (source.sitemapTextFallbackUrl) {
+    candidates.push({ url: source.sitemapTextFallbackUrl, route: "sitemap-text-fallback" });
+  }
 
   let lastError = null;
+  let partialSitemapResponse = null;
   for (const candidate of candidates) {
     try {
       const text = await fetchText(candidate.url, {
@@ -161,12 +170,20 @@ async function fetchAndParseSource(source) {
         // これによりWAF説明HTMLを空配列として誤って成功扱いせず、Reader予備経路まで検証できる。
         throw new Error("ヘッドラインを抽出できませんでした");
       }
+      if (source.sitemapTextFallbackUrl && parsedItems.some((item) =>
+        !item.title || !item.publishedAt || !Number.isFinite(new Date(item.publishedAt).getTime())
+      )) {
+        // URLだけのReader応答も保存しつつ、見出し・日時を持つSitemap予備経路を先に試す。
+        partialSitemapResponse = { parsedItems, route: candidate.route };
+        continue;
+      }
       return { parsedItems, route: candidate.route };
     } catch (error) {
       lastError = error;
     }
   }
 
+  if (partialSitemapResponse) return partialSitemapResponse;
   throw lastError || new Error("取得経路がすべて失敗しました");
 }
 
@@ -255,12 +272,23 @@ export function parseFeed(text, source) {
 }
 
 // Racing TVのReaderカードを共有抽出器で読み、日時が確定した記事だけを本体と同じ条件で返す。
-export function parseRacingTvReader(text, source) {
+export async function parseRacingTvReader(text, source) {
   // 同じ一覧の相対時刻は一つの基準時刻から計算し、処理中のミリ秒差で新着順判定が逆転しないようにする。
   const nowMs = Date.now();
-  return extractRacingTvReaderCards(text)
+  const candidates = extractRacingTvReaderCards(text)
     .map((item) => ({ ...item, publishedAt: parseInternationalDate(item.publishedAt, nowMs) }))
-    .filter((item) => item.publishedAt && isCandidateArticleUrl(item.url, source));
+    .filter((item) => isCandidateArticleUrl(item.url, source));
+  // 本体の上限・並列数で既存Reader補完を使い、一覧に時刻のないカードも正確な公開日時へ結び付ける。
+  const hydrated = await hydrateItemsFromReader(candidates, {
+    ...source,
+    hydrationLimit: source.detailHydrationLimit,
+    hydrationConcurrency: source.detailHydrationConcurrency,
+    hydrationTimeoutMs: source.detailRequestTimeoutMs
+  });
+  // 掲載位置が優先された一覧順ではなく、補完後の日時で本体表示と同じ新着順にする。
+  return hydrated
+    .filter((item) => item.publishedAt && Number.isFinite(new Date(item.publishedAt).getTime()))
+    .sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
 }
 
 // The AgeのReader一覧を共有抽出器で読み、本体と同じ最終URL条件へ通す。
@@ -493,36 +521,15 @@ function isAllowedDecorationImage(value, source) {
   return true;
 }
 
-// 東スポ競馬のReader一覧カードから、同じ行の画像・記事URL・完全見出しと直後の日付時刻を読む。
-// カードごとの「ニュース / YYYY/MM/DD / 曜日 / HH:mm」という並びだけを対象にし、ランキング欄を除外する。
+// 東スポの公式Sitemapは、XML・Readerリンク・平文変換のいずれでも本体と同じ記事だけを返す。
+export function parseTospoNewsSitemap(text, source) {
+  const textItems = extractTospoSitemapTextItems(text);
+  return textItems.length > 0 ? textItems : parseNewsSitemap(text, source);
+}
+
+// 東スポの一覧カードは本体の抽出器を共有し、日時や画像の結合条件を揃える。
 export function parseTospoReaderCards(text) {
-  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
-  const items = [];
-
-  lines.forEach((line, index) => {
-    const card = line.match(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)(?:!\[[^\]]*\]\([^)]+\))?\s*\[([^\]]+)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)/i);
-    if (!card || !sameArticleUrl(card[2], card[4])) return;
-
-    // Readerでは日時がカード行の後ろへ出力される。次のカードへ到達する前の範囲だけを探索し、
-    // 直前カードの日時を一つ後の記事へ誤って割り当てないようにする。
-    const nextCardOffset = lines
-      .slice(index + 1)
-      .findIndex((value) => /tospo-keiba\.jp\/breaking_news\/\d+/i.test(value));
-    const endIndex = nextCardOffset === -1 ? index + 8 : index + 1 + nextCardOffset;
-    const nearby = lines.slice(index + 1, Math.min(endIndex, index + 8));
-    const date = nearby.find((value) => /^20\d{2}\/\d{1,2}\/\d{1,2}$/.test(value));
-    const time = nearby.find((value) => /^\d{1,2}:\d{2}$/.test(value));
-    if (!date || !time) return;
-
-    items.push({
-      title: card[3],
-      url: card[4],
-      publishedAt: `${date} ${time}`,
-      thumbnail: card[1]
-    });
-  });
-
-  return items;
+  return extractTospoReaderCards(text);
 }
 
 // Irish Racing一覧の通常カードと、画像・本文・時刻が一つのリンクへ圧縮された先頭カードを共通形式へ変換する。
