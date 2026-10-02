@@ -271,6 +271,17 @@ export function parseFeed(text, source) {
   }).filter(Boolean);
 }
 
+// Daily Mailの競馬・モータースポーツ共有RSSを、本体と同じ記事URLゲートへ通す。
+// 全件除外の0件成功を許すため、HTML説明ページや別形式の本文を空RSSとして扱わない。
+export function parseDailyMailFeed(text, source) {
+  const responseText = String(text || "").replace(/^\uFEFF/, "");
+  if (!/^\s*(?:<\?xml[^>]*>\s*)?<(?:rss|feed)\b/i.test(responseText)) {
+    throw new Error("RSSレスポンスをXMLとして解析できませんでした");
+  }
+  return parseFeed(responseText, source)
+    .filter((item) => isCandidateArticleUrl(item.url, source));
+}
+
 // Racing TV一覧の相対日時はReaderキャッシュでずれるため、先頭を含め記事詳細の公開日時で確定する。
 export async function parseRacingTvReader(text, source) {
   const candidates = extractRacingTvReaderCards(text)

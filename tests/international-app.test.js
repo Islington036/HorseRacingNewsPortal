@@ -17,8 +17,9 @@ async function run() {
   await testRacingTvDetailDates(harness);
   testFinalArticleUrlGate(harness);
   await testSourceMetadataCacheMigration(harness);
+  await testDailyMailMotorSportExclusion(harness);
 
-  console.log("international-app: 6 tests passed");
+  console.log("international-app: 7 tests passed");
 }
 
 // fetchのヘッダー受信後に本文が停止しても、同じAbortタイマーで打ち切れることを確認する。
@@ -241,6 +242,108 @@ async function testSourceMetadataCacheMigration({ api, context }) {
   assert.equal(JSON.parse(stored).sourceVersions.thestraight, straight.cacheVersion);
   api.loadCache();
   assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId).sort(), ["tdn_america", "thestraight"]);
+}
+
+// 観測したNASCARドライバー記事だけを本体・テスター・保存済み記事から除き、競馬と正常0件を保つ。
+async function testDailyMailMotorSportExclusion({ api, context }) {
+  const config = context.window.InternationalHorseRacingPortalDefinition.CONFIG;
+  const site = config.SITES.find((entry) => entry.id === "dailymail_racing");
+  const now = new Date().toISOString();
+  const motorArticle = {
+    title: "Female Nascar driver pays $850k for 'affair' with woman's husband",
+    url: "https://www.dailymail.com/sport/racing/article-16172365/Nascar-driver-sued-affair-jennifer-cobb-clayton-hughes.html?ns_mchannel=rss&ns_campaign=1490&ito=1490",
+    publishedAt: now
+  };
+  const horseArticle = {
+    title: "Pierre Royal produces huge shock to win bet365 Cambridgeshire Handicap as late decision by trainer pays off",
+    url: "https://www.dailymail.com/sport/racing/article-16162963/Pierre-Royal-produces-huge-shock-win-bet365-Cambridgeshire-Handicap-late-decision-trainer-pays-off.html",
+    publishedAt: now
+  };
+  const ukHorseArticle = { ...horseArticle, url: horseArticle.url.replace("dailymail.com", "dailymail.co.uk") };
+  assert.equal(api.normalizeItem(motorArticle, site, 0), null);
+  assert.ok(api.normalizeItem(horseArticle, site, 0));
+  assert.ok(api.normalizeItem(ukHorseArticle, site, 0));
+  // 競走馬名の一部、単なる競技名・比喩、他媒体にはNASCARドライバー除外を広げない。
+  assert.ok(api.normalizeItem({ ...horseArticle, url: horseArticle.url.replace("Pierre-Royal", "Nascarlet") }, site, 0));
+  assert.ok(api.normalizeItem({ ...horseArticle, url: horseArticle.url.replace("Pierre-Royal", "Nascar-inspired-horse") }, site, 0));
+  assert.ok(api.normalizeItem({ ...motorArticle, url: motorArticle.url.replace("www.dailymail.com/sport/racing", "news.example.test/news") }, {
+    id: "example_news", name: "Example News", region: "europe", baseUrl: "https://news.example.test", pathHints: ["/news/"]
+  }, 0));
+
+  let stored = JSON.stringify({
+    sourceVersions: { dailymail_racing: site.cacheVersion },
+    siteLatest: { dailymail_racing: now, tdn_america: now },
+    allItems: [
+      { ...motorArticle, sourceId: site.id },
+      { ...horseArticle, sourceId: site.id },
+      { ...horseArticle, sourceId: "tdn_america", url: "https://www.thoroughbreddailynews.com/current-racing-news/" }
+    ]
+  });
+  context.localStorage = { getItem: () => stored, setItem: (_key, value) => { stored = value; } };
+  api.loadCache();
+  assert.equal(api.state.allItems.length, 2);
+  assert.ok(api.state.allItems.every((item) => !item.url.includes("Nascar-driver")));
+  // 旧版だけは媒体ごと更新し、誤記事由来の最新日時も残さず、他媒体のキャッシュは保持する。
+  const oldCache = JSON.parse(stored);
+  oldCache.sourceVersions.dailymail_racing = 0;
+  stored = JSON.stringify(oldCache);
+  api.loadCache();
+  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId), ["tdn_america"]);
+  assert.deepEqual(Object.keys(api.state.siteLatest), ["tdn_america"]);
+
+  const rssBody = "<rss><channel><item>fixture</item></channel></rss>";
+  let feedItems = [motorArticle, horseArticle, ukHorseArticle];
+  context.DOMParser = class extends FakeDOMParser {
+    parseFromString(text, type) {
+      if (type !== "application/xml") return super.parseFromString(text, type);
+      return {
+        documentElement: { localName: (text.match(/^\s*(?:<\?xml[^>]*>\s*)?<([\w:-]+)/) || [])[1] || "" },
+        getElementsByTagNameNS() { return []; },
+        querySelector(selector) { return selector === "parsererror" && text === "<rss><channel></rss>" ? {} : null; },
+        querySelectorAll(selector) {
+          if (selector !== "item, entry") return [];
+          return feedItems.map((item) => ({
+            querySelector(name) {
+              const value = { title: item.title, link: item.url, pubDate: item.publishedAt }[name];
+              return value ? { textContent: value, getAttribute() { return ""; } } : null;
+            },
+            querySelectorAll() { return []; }
+          }));
+        }
+      };
+    }
+  };
+  context.fetch = async () => createTextResponse(rssBody);
+  const mainItems = await api.fetchSite(site);
+  assert.equal(mainItems.length, 2);
+  assert.equal(mainItems[0].url, horseArticle.url);
+  assert.equal(mainItems[1].url, ukHorseArticle.url);
+
+  // テスターの実コードと本体設定を同じVMへ読み込み、別の除外条件を作らず検証する。
+  vm.runInContext(fs.readFileSync(require.resolve("../japanese/config.js"), "utf8"), context);
+  context.window.JapaneseHorseRacingSourceParsers = {};
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/core.js"), "utf8").replace(/^export /gm, ""), context);
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/sources.js"), "utf8")
+    .replace(/^import .*\n/, "").replace(/^export /gm, "") +
+    '\nwindow.__DailyMailTestSource = SOURCES.find((entry) => entry.id === "dailymail_rss");\nwindow.__RunSourceTest = runSourceTest;', context);
+  const testSource = context.window.__DailyMailTestSource;
+  assert.deepEqual(Array.from(testSource.excludePathHints), Array.from(site.excludePathHints));
+  const mixedReport = await context.window.__RunSourceTest(testSource);
+  assert.equal(mixedReport.passed, true);
+  assert.equal(mixedReport.itemCount, 2);
+  assert.equal(mixedReport.items[0].url, horseArticle.url);
+  assert.equal(mixedReport.items[1].url, ukHorseArticle.url);
+
+  feedItems = [motorArticle];
+  assert.equal((await api.fetchSite(site)).length, 0);
+  const emptyReport = await context.window.__RunSourceTest(testSource);
+  assert.equal(emptyReport.passed, true);
+  assert.equal(emptyReport.itemCount, 0);
+  for (const invalidBody of ["<html><body>Service unavailable</body></html>", "<rss><channel></rss>", '<?xml version="1.0"?><error>unavailable</error>']) {
+    context.fetch = async () => createTextResponse(invalidBody);
+    await assert.rejects(api.fetchSite(site));
+    await assert.rejects(context.window.__RunSourceTest(testSource));
+  }
 }
 
 // 本体IIFEへテスト時だけ関数参照を差し込み、製品コードへtest-only公開APIを追加せず検証する。
