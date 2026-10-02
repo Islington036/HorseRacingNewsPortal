@@ -99,7 +99,16 @@
         // Sitemapのpublication_dateには更新時刻が入るため、公開時刻を持つ一覧を正本にする。
         // 一覧時計は共有抽出器でEurope/Dublinとして解釈し、旧端末時刻キャッシュは媒体単位で更新する。
         { id: "irishracing", name: "Irish Racing", region: "europe", url: "https://www.irishracing.com/news", baseUrl: "https://www.irishracing.com", parser: "generic", pathPrefixes: ["/news/"], pathHints: ["/news"], caseInsensitivePath: true, matchByTrailingNumericId: true, preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000, cacheVersion: 1 },
-        { id: "dailymail_racing", name: "Daily Mail Racing", region: "europe", url: "https://www.dailymail.com/sport/racing/index.html", feedUrl: "https://www.dailymail.com/sport/racing/index.rss", baseUrl: "https://www.dailymail.com", parser: "generic", pathHints: ["/sport/racing/article-"], allowedHosts: ["dailymail.co.uk"], preferTextProxy: true, tryDirect: true },
+        // racing共有RSSにはカテゴリがないため、URLに明示されたNASCARドライバー記事だけを除外する。
+        // 単純部分一致の既存ゲートでも固有名詞の一部を誤除外しないよう、前後のURL区切りを含める。
+        // 有効RSSの全件が除外対象でも0件成功を保持し、旧分類のキャッシュはこの媒体だけ更新する。
+        {
+          id: "dailymail_racing", name: "Daily Mail Racing", region: "europe",
+          url: "https://www.dailymail.com/sport/racing/index.html", feedUrl: "https://www.dailymail.com/sport/racing/index.rss",
+          baseUrl: "https://www.dailymail.com", parser: "generic", pathHints: ["/sport/racing/article-"], allowedHosts: ["dailymail.co.uk"],
+          excludePathHints: ["/nascar-driver-", "-nascar-driver-"],
+          preferTextProxy: true, tryDirect: true, allowEmptyStructured: true, cacheVersion: 1
+        },
         { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", apiUrl: MIRROR_RACING_RSS_API, baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], preferTextProxy: true, tryDirect: true, rss2Json: true, exclusiveStructuredJson: true },
         // Sporting Life自身のWeb画面が利用する公開JSON APIを直接読む。
         // CORS許可済みの構造化データなので、Cookie同意画面や公開プロキシの遅延を避けられる。

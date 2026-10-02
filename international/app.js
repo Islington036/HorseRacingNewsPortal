@@ -451,6 +451,11 @@
         // 先頭がXMLでも本文が壊れているケースを明示的に失敗させ、空配列による原因不明表示を防ぐ。
         throw new Error("RSSレスポンスをXMLとして解析できませんでした");
       }
+      if (site.id === "dailymail_racing" && site.expectedResponseType === "xml" &&
+        !/^(?:rss|feed)$/i.test(doc.documentElement && doc.documentElement.localName || "")) {
+        // 正常0件を許可するDaily Mailでも、XML宣言付きのerror応答を空RSSとして成功扱いしない。
+        throw new Error("RSSレスポンスをXMLとして解析できませんでした");
+      }
       const parser = PARSERS[site.parser] || PARSERS.generic;
       let rawItems = parser(doc, site, responseText, json);
       if (site.readerDecorationUrls && site.readerDecorationUrls.length > 0) {

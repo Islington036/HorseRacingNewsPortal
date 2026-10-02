@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20260925-exact-published-time";
+import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261002-dailymail-filter";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -15,6 +15,7 @@ const sponichiSite = japaneseConfig.SITES.find((site) => site.id === "sponichi")
 const sanspoSite = japaneseConfig.SITES.find((site) => site.id === "sanspo");
 const tospoSite = japaneseConfig.SITES.find((site) => site.id === "tospo");
 const mirrorRacingSite = internationalConfig.SITES.find((site) => site.id === "mirror_racing");
+const dailyMailRacingSite = internationalConfig.SITES.find((site) => site.id === "dailymail_racing");
 const scmpRacingSite = internationalConfig.SITES.find((site) => site.id === "scmp_racing");
 const thoroughbredRacingRss = "https://www.thoroughbredracing.com/rss.xml";
 const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(thoroughbredRacingRss);
@@ -414,15 +415,17 @@ export const SOURCES = [
     minimumImageCoverage: 0.75
   },
   {
+    ...dailyMailRacingSite,
     id: "dailymail_rss",
     name: "Daily Mail Racing RSS",
-    url: "https://www.dailymail.com/sport/racing/index.rss",
-    baseUrl: "https://www.dailymail.com",
-    parse: parseFeed,
-    tryDirect: true,
+    url: dailyMailRacingSite.feedUrl,
+    parse: parseDailyMailFeed,
+    // 本体が許可するcom/co.ukの正規記事を、テスターのorigin診断でも同じように認める。
+    allowedOrigins: ["https://www.dailymail.com", "https://dailymail.com", "https://www.dailymail.co.uk", "https://dailymail.co.uk"],
     requireDate: true,
-    minimumItems: 1,
-    minimumImageCoverage: 0.75
+    // 共有RSSに競馬記事がない場合は正常な0件。画像なし記事は本体のダミー表示を許容する。
+    minimumItems: 0,
+    minimumImageCoverage: 0
   },
   {
     id: "tdn_europe_wordpress",
