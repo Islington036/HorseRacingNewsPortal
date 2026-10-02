@@ -295,7 +295,7 @@ async function testSanspoFiltersMemberPagesBeforeHydrationLimit() {
     },
     fetch(url) {
       requestedUrls.push(url);
-      if (url === "https://proxy.example/sanspo-sitemap") {
+      if (url === site.sitemapUrl || url === "https://proxy.example/sanspo-sitemap") {
         return Promise.resolve(createResponseText("sitemap"));
       }
 
@@ -316,6 +316,74 @@ async function testSanspoFiltersMemberPagesBeforeHydrationLimit() {
   assert.equal(harness.portal.getSnapshot().itemCount, 2);
   assert.ok(generalUrls.every((url) => requestedUrls.some((requested) => requested.includes(encodeURIComponent(url)))));
   assert.ok(basicUrls.every((url) => requestedUrls.every((requested) => !requested.includes(encodeURIComponent(url)))));
+}
+
+// サンスポ専用取得は直接成功を優先し、HTTP 200の候補0件も次へ進め、全経路失敗時は前回記事を保持する。
+async function testSanspoSitemapRoutesRequirePublicArticles() {
+  const articleUrl = "https://www.sanspo.com/race/article/general/20261002-AAAAAAAAAAAAAAAAAAAAAAAAAA/";
+  const site = {
+    id: "sanspo", name: "サンスポ", baseUrl: "https://www.sanspo.com",
+    url: "https://www.sanspo.com/race/keiba/",
+    sitemapUrl: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
+    detailHydrationLimit: 8, detailHydrationConcurrency: 2
+  };
+  const sitemap = `<urlset><url><loc>${articleUrl}</loc></url></urlset>`;
+  const firstProxy = "https://proxy.example/first";
+  const secondProxy = "https://proxy.example/second";
+  const readerUrl = (url) => `https://reader.example/${encodeURIComponent(url)}`;
+  const sitemapRoutes = [site.sitemapUrl, firstProxy, secondProxy, readerUrl(site.sitemapUrl)];
+  class SitemapDomParser {
+    parseFromString(text) {
+      return {
+        querySelector(selector) { return selector === "parsererror" && !text.startsWith("<") ? {} : null; },
+        getElementsByTagNameNS(_namespace, localName) {
+          if (localName !== "url") return [];
+          return [...text.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => ({
+            getElementsByTagNameNS(_childNamespace, childLocalName) {
+              return childLocalName === "loc" ? [{ textContent: match[1] }] : [];
+            }
+          }));
+        }
+      };
+    }
+  }
+
+  for (const successRoute of [0, 2, 3, -1]) {
+    const requestedUrls = [];
+    const lastUpdatedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const oldItem = { ...cachedItem("sanspo", "前回サンスポ記事"), url: articleUrl, source: "サンスポ" };
+    const harness = createHarness({ lastUpdatedAt, siteLatest: {}, allItems: [oldItem] }, {
+      DOMParser: SitemapDomParser, sites: [site],
+      configure(config) {
+        config.CORS_PROXY = () => firstProxy;
+        config.CORS_PROXY_FALLBACKS = [() => secondProxy];
+        config.TEXT_PROXY = readerUrl;
+        config.TEXT_PROXY_MIN_INTERVAL_MS = 0;
+      },
+      fetch(url) {
+        requestedUrls.push(url);
+        if (url === readerUrl(articleUrl)) {
+          return Promise.resolve(createResponseText(`Title: サンスポ最新公開記事\nPublished Time: ${new Date().toISOString()}`));
+        }
+        if (url === sitemapRoutes[successRoute]) {
+          return Promise.resolve(createResponseText(successRoute === 3 ? `Title: Sitemap\n${articleUrl}` : sitemap));
+        }
+        // 通信成功だけを採用しないことを確認するため、先頭CORSは常に200の候補なし本文を返す。
+        if (url === firstProxy) return Promise.resolve(createResponseText("<error>service unavailable</error>"));
+        return Promise.reject(new Error("source unavailable"));
+      }
+    });
+    await harness.portal.refresh();
+    assert.deepEqual(requestedUrls.filter((url) => sitemapRoutes.includes(url)),
+      successRoute < 0 ? sitemapRoutes : sitemapRoutes.slice(0, successRoute + 1));
+    assert.equal(harness.portal.getSnapshot().itemCount, 1);
+    assert.equal(harness.portal.getSnapshot().errorCount, successRoute < 0 ? 1 : 0);
+    assert.match(harness.elements.get("#newsList").innerHTML, successRoute < 0 ? /前回サンスポ記事/ : /サンスポ最新公開記事/);
+    if (successRoute < 0) {
+      assert.equal(harness.portal.getSnapshot().lastUpdatedAt, lastUpdatedAt);
+      assert.ok(!requestedUrls.includes(readerUrl(articleUrl)), "有効なSitemap候補がなければ詳細取得へ進まない");
+    }
+  }
 }
 
 async function testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(readerText = "Title: エラー\nただいまアクセスが集中しています") {
@@ -381,10 +449,11 @@ async function run() {
   await testAllFailuresPreserveCacheTimestamp();
   testInvalidCachedTimestampIsIgnored();
   await testSanspoFiltersMemberPagesBeforeHydrationLimit();
+  await testSanspoSitemapRoutesRequirePublicArticles();
   await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards();
   await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards("[article](https://tospo-keiba.jp/breaking_news/75702)");
   await testSourceDetailsKeepFailuresVisible();
-  console.log("japanese-refresh: 7 tests passed");
+  console.log("japanese-refresh: 8 tests passed");
 }
 
 run().catch((error) => {
