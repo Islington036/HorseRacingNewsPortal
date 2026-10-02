@@ -445,17 +445,35 @@
     // サンスポの競馬SitemapをURL許可リストとして読み、記事Readerで見出し・公開日時・写真を補完する。
     // Sitemapのlastmodは本文修正でも更新されるため、公開日時には使わずPublished Timeだけを採用する。
     async function fetchSanspoStructuredItems(site) {
-      let sitemapText = "";
-      try {
-        // XML構造を保つ公開CORSプロキシを先に試し、失敗時だけReaderのURL一覧へフォールバックする。
-        sitemapText = await fetchText(site.sitemapUrl, "application/xml,text/xml;q=0.9,*/*;q=0.8");
-      } catch (_error) {
-        sitemapText = await fetchReaderText(site.sitemapUrl, false);
-      }
+      const readerSitemapUrl = CONFIG.TEXT_PROXY(site.sitemapUrl);
+      const sitemapUrls = [
+        site.sitemapUrl,
+        CONFIG.CORS_PROXY(site.sitemapUrl),
+        ...CONFIG.CORS_PROXY_FALLBACKS.map((buildUrl) => buildUrl(site.sitemapUrl)),
+        readerSitemapUrl
+      ];
+      let sitemapItems = [];
+      let lastError = null;
 
-      const sitemapItems = extractSanspoSitemapItems(sitemapText, site)
-        .slice(0, site.detailHydrationLimit || 8);
-      if (sitemapItems.length === 0) throw new Error(t("noExtract"));
+      // CORS対応の公式XMLを先に読み、通信失敗・HTTP 200の不正本文・公開記事0件はいずれも次へ進む。
+      // Readerは既存の共有開始間隔と20秒、公式/CORS経路は9秒の通信上限をそのまま使う。
+      for (const sitemapUrl of sitemapUrls) {
+        try {
+          const usesReader = sitemapUrl === readerSitemapUrl;
+          const timeoutMs = usesReader
+            ? CONFIG.TITLE_HYDRATION_TIMEOUT_MS
+            : CONFIG.REQUEST_TIMEOUT_MS;
+          const sitemapText = await fetchProxyText(sitemapUrl, timeoutMs,
+            usesReader ? undefined : "application/xml,text/xml;q=0.9,*/*;q=0.8");
+          sitemapItems = extractSanspoSitemapItems(sitemapText, site)
+            .slice(0, site.detailHydrationLimit || 8);
+          if (sitemapItems.length > 0) break;
+          lastError = new Error(t("noExtract"));
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (sitemapItems.length === 0) throw lastError || new Error(t("noExtract"));
 
       // 記事詳細への同時接続を少数に抑え、片方が失敗しても他の記事の補完結果は残す。
       const hydratedItems = await mapWithConcurrency(
