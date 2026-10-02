@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20260925-exact-published-time";
-import { SOURCES } from "./sources.js?v=20260925-exact-published-time";
+import { runSourceTest } from "./core.js?v=20261002-dailymail-filter";
+import { SOURCES } from "./sources.js?v=20261002-dailymail-filter";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
