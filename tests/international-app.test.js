@@ -14,6 +14,7 @@ async function run() {
   await testResponseBodyTimeout(harness);
   await testRateLimiterResponseCompatibility(harness);
   await testReaderUpstreamDiagnostics();
+  await testTtrTitleSymbolMatching();
   await testDirectRequestCachePolicy(harness);
   await testWordPressMetadataAuthority();
   await testRacingTvDetailDates(harness);
@@ -21,7 +22,7 @@ async function run() {
   await testSourceMetadataCacheMigration(harness);
   await testDailyMailMotorSportExclusion(harness);
 
-  console.log("international-app: 9 tests passed");
+  console.log("international-app: 10 tests passed");
 }
 
 // fetchのヘッダー受信後に本文が停止しても、同じAbortタイマーで打ち切れることを確認する。
@@ -126,6 +127,52 @@ async function testReaderUpstreamDiagnostics() {
     "\nWarning: Target URL returned error 509: Bandwidth Limit Exceeded";
   context.fetch = async () => createTextResponse(normalBody);
   assert.equal(await api.fetchProxyText(readerUrl, {}, 100), normalBody);
+}
+
+// TTR実見出しの通貨・百分率・小数を比較時だけ正規化し、要約混入と汎用slug変更を防ぐ。
+async function testTtrTitleSymbolMatching() {
+  const { api, context } = loadAppHarness();
+  const site = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES.find((entry) => entry.id === "ttrausnz");
+  const title = "Inglis Digital: Ninja valued at $5.5 million after 1% share sells";
+  const slug = "inglis-digital-ninja-valued-at-dollar55-million-after-1percent-share-sells";
+  const articleUrl = `${site.baseUrl}/edition/2026-10-09/${slug}`;
+  const listing = [
+    `##### [${title} The share sale attracted bidders October 9, 2026](${articleUrl})`,
+    `##### [Friday racing preview A useful summary October 9, 2026](${site.baseUrl}/edition/2026-10-09/friday-racing-preview)`,
+    `##### [Job board Latest roles October 9, 2026](${site.baseUrl}/edition/2026-10-09/job-board)`
+  ].join("");
+  context.fetch = async () => createTextResponse(listing);
+  const items = await api.fetchSite(site);
+  assert.equal(items.length, 2);
+  assert.equal(items[0].title, title);
+  assert.equal(items[0].url, articleUrl);
+  assert.equal(items[0].publishedAt.getTime(), new Date(2026, 9, 9).getTime());
+  assert.equal(items[1].title, "Friday racing preview");
+
+  const extractTitle = sourceParsers.extractTtrTitleMatchingSlug;
+  assert.equal(extractTitle(`${title} A longer summary follows`, slug), title);
+  assert.equal(extractTitle("Trainer’s wins & sales Summary follows", "trainers-wins-and-sales"), "Trainer’s wins & sales");
+  assert.equal(extractTitle("A different headline with Ninja in its summary", slug), "");
+  assert.equal(extractTitle(`Breaking news ${title}`, slug), "");
+
+  context.window.JapaneseHorseRacingSourceParsers = {};
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/core.js"), "utf8").replace(/^export /gm, ""), context);
+  const testItems = context.parseTtrAusNzReader(listing);
+  assert.equal(testItems.length, 2);
+  assert.equal(testItems[0].title, title);
+  assert.equal(testItems[0].url, articleUrl);
+  assert.equal(testItems[0].publishedAt, "2026-10-09T00:00:00");
+  assert.equal(testItems[0].thumbnail, "");
+  const mismatch = `##### [Breaking news ${title}](${articleUrl})`;
+  assert.equal(api.extractTtrAusNzMarkdownItems(mismatch, site).length, 0);
+  assert.throws(() => context.parseTtrAusNzReader(mismatch), /見出しをURLと照合できませんでした/);
+
+  const sportingLifeItems = context.parseSportingLifeApi(JSON.stringify([{
+    article_id: 123,
+    title,
+    published_date: "2026-10-09T00:00:00Z"
+  }]));
+  assert.equal(sportingLifeItems[0].url, "/racing/news/inglis-digital-ninja-valued-at-5-5-million-after-1-share-sells/123");
 }
 
 // no-storeは媒体設定を持つ公式URLの直接取得だけへ渡し、公開プロキシには伝播させない。
@@ -471,6 +518,7 @@ function loadAppHarness() {
     window.__InternationalAppTestApi = {
       fetchProxyText,
       fetchSite,
+      extractTtrAusNzMarkdownItems,
       isCandidateArticleUrl,
       normalizeItem,
       loadCache,
