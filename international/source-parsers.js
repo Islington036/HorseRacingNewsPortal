@@ -463,6 +463,31 @@
     return String(hostname || "").replace(/^www\./i, "");
   }
 
+  // TTRの「見出し＋要約＋日付」ラベルから、URL slugと一致する先頭見出しだけを返す。
+  // 比較用の記号変換は表示タイトルへ適用せず、一致しないラベルからURL由来の題名も作らない。
+  function extractTtrTitleMatchingSlug(label, slug) {
+    const words = cleanWhitespace(label).split(" ").filter(Boolean);
+    const expectedSlug = normalizeTtrTitleSlug(slug);
+    for (let index = 1; index <= words.length; index += 1) {
+      const candidate = words.slice(0, index).join(" ");
+      if (normalizeTtrTitleSlug(candidate) === expectedSlug) return candidate;
+    }
+    return "";
+  }
+
+  // TTR固有の通貨・百分率・小数表記をslugの綴りへ揃える。Sporting Life等の汎用規則とは分離する。
+  function normalizeTtrTitleSlug(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/\$/g, "dollar")
+      .replace(/%/g, "percent")
+      .replace(/(\d)\.(?=\d)/g, "$1")
+      .replace(/&/g, " and ")
+      .replace(/['’]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
   function isTtrAusNzFixedPage(slug) {
     const value = String(slug || "");
     return /^(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(value) ||
@@ -474,6 +499,7 @@
     extractRacenetReaderCards,
     extractRacingTvReaderCards,
     extractTheAgeReaderItems,
+    extractTtrTitleMatchingSlug,
     hasExplicitTimezone,
     isCandidateArticleUrl,
     isAllowedWordPressPost,

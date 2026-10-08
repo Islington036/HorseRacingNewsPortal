@@ -15,6 +15,7 @@
     extractIrishRacingReaderItems,
     extractRacingTvReaderCards,
     extractTheAgeReaderItems,
+    extractTtrTitleMatchingSlug,
     hasExplicitTimezone,
     isCandidateArticleUrl,
     isAllowedWordPressPost,
@@ -1314,7 +1315,7 @@
 
         // 見出しラベルには「タイトル＋要約＋日付」が連結されている。
         // URL slugと一致する先頭部分を探し、要約や日付がヘッドラインへ混ざらないようにする。
-        const title = extractTitleMatchingSlug(match[1], slug);
+        const title = extractTtrTitleMatchingSlug(match[1], slug);
         if (!isLikelyHeadline(title)) continue;
 
         items.push({
@@ -1328,18 +1329,6 @@
       }
 
       return items.sort((left, right) => right.publishedAt - left.publishedAt);
-    }
-
-    // 「タイトル＋要約」からURL slugと完全一致するタイトル部分だけを復元する。
-    function extractTitleMatchingSlug(label, slug) {
-      const words = cleanWhitespace(label).split(" ").filter(Boolean);
-
-      for (let index = 1; index <= words.length; index += 1) {
-        const candidate = words.slice(0, index).join(" ");
-        if (slugifyPathSegment(candidate) === slugifyPathSegment(slug)) return candidate;
-      }
-
-      return "";
     }
 
     // RacenetをJina Readerで読んだMarkdownから、画像付きカードを記事化する。
