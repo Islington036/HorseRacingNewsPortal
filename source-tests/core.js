@@ -15,8 +15,10 @@ const {
   extractIrishRacingReaderItems,
   extractRacingTvReaderCards,
   extractTheAgeReaderItems,
+  extractTtrTitleMatchingSlug,
   isCandidateArticleUrl,
   isAllowedWordPressPost,
+  isTtrAusNzFixedPage,
   parseInternationalDate,
   readZonedParts: timeZoneParts,
   zonedDateToUtc
@@ -850,7 +852,7 @@ export function parseTtrAusNzReader(text) {
     const slug = match[4];
     if (isTtrAusNzFixedPage(slug)) continue;
 
-    const title = extractTtrTitleMatchingSlug(match[1], slug);
+    const title = extractTtrTitleMatchingSlug(cleanText(match[1]), slug);
     if (!title) {
       // URLから題名を生成すると抽出失敗を隠すため、実見出しを復元できないカードはテスト失敗にする。
       throw new Error(`TTR AusNZの見出しをURLと照合できませんでした: ${url}`);
@@ -884,22 +886,6 @@ export function parseLoveracingReader(text) {
   }
 
   return items.sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
-}
-
-// Readerラベル先頭から、URL slugと一致するタイトル部分だけを切り出す。
-function extractTtrTitleMatchingSlug(label, slug) {
-  const words = cleanText(label).split(" ").filter(Boolean);
-  for (let index = 1; index <= words.length; index += 1) {
-    const candidate = words.slice(0, index).join(" ");
-    if (slugifySourceTestPath(candidate) === slugifySourceTestPath(slug)) return candidate;
-  }
-  return "";
-}
-
-// TTRのニュース一覧に常設される案内・索引ページをslugで除外する。
-function isTtrAusNzFixedPage(slug) {
-  return /^(?:job-board|wednesday-trivia|20\d{2}-stallion-parades|daily-news-wrap|debutants|first-season-sire-runners-and-results|thanks-for-reading)$/i.test(String(slug || "")) ||
-    /^looking-ahead(?:-|$)/i.test(String(slug || ""));
 }
 
 // APIが返す英文タイトルをSporting Lifeの記事パス形式へ正規化する。

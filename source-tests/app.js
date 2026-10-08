@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20261009-reader-diagnostics";
-import { SOURCES } from "./sources.js?v=20261009-reader-diagnostics";
+import { runSourceTest } from "./core.js?v=20261009-ttr-title-symbols";
+import { SOURCES } from "./sources.js?v=20261009-ttr-title-symbols";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
