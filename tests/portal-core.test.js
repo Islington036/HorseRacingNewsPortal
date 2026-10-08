@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const {
+  assertReaderTargetSuccess,
   createRequestRateLimiter,
   dedupeByUrl,
   extractReaderTitleCandidates,
@@ -21,6 +22,7 @@ async function run() {
   testRss2JsonItems();
   testJapaneseDateParsing();
   testUrlUtilities();
+  testReaderTargetDiagnostics();
   testReaderTitleCandidates();
   testNonTerminalTitlePreference();
   testTrailingSourceNameRemoval();
@@ -30,7 +32,7 @@ async function run() {
   await testRateLimitExtensionDuringWait();
   await testRateLimitAbort();
   await testQueuedRateLimitAbort();
-  console.log("portal-core: 14 tests passed");
+  console.log("portal-core: 15 tests passed");
 }
 
 // APIと完全RSSで同じ記事を返しても、最新日時を残して新着順・上限件数へ揃うことを確認する。
@@ -105,6 +107,29 @@ function testUrlUtilities() {
   assert.equal(updated.searchParams.get("portal_refresh"), "123");
   assert.equal(updated.hash, "#latest");
   assert.equal(setUrlQueryParameter("not a url", "portal_refresh", 123), "not a url");
+}
+
+// Readerの正式ヘッダーにある上流失敗だけを検出し、本文引用や通常のテキストは変えない。
+function testReaderTargetDiagnostics() {
+  const header = "Title: Quota Exceeded\n\nURL Source: https://www.ttrausnz.com.au/\n\n";
+  const warning = "Warning: Target URL returned error 509: Bandwidth Limit Exceeded";
+  const quotaResponse = `${header}${warning}\n\nMarkdown Content:\n## Bandwidth Quota Exceeded`;
+  assert.throws(() => assertReaderTargetSuccess(quotaResponse), /元サイトの帯域制限.*HTTP 509/);
+  assert.throws(() => assertReaderTargetSuccess(`\uFEFF${quotaResponse.replace(/\n/g, "\r\n")}`), /HTTP 509/);
+
+  for (const status of [403, 502]) {
+    assert.throws(() => assertReaderTargetSuccess(quotaResponse.replace("509", String(status))), new RegExp(`元サイト.*HTTP ${status}`));
+  }
+  for (const response of [
+    `${header}Markdown Content:\n${warning}`,
+    `${header}${warning}`,
+    `${warning}\nMarkdown Content:\nArticle body`,
+    quotaResponse.replace("URL Source:", "Quoted URL:"),
+    quotaResponse.replace("509", "200"),
+    "{\"message\":\"Warning: Target URL returned error 509\"}"
+  ]) {
+    assert.doesNotThrow(() => assertReaderTargetSuccess(response));
+  }
 }
 
 // Reader本文ではTitle行とMarkdownのH1を候補に含め、同一見出しは一度だけ扱う。

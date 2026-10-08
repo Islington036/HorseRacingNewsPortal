@@ -2,6 +2,7 @@
   const definition = window.InternationalHorseRacingPortalDefinition;
   const { CONFIG, I18N, REGION_OPTIONS, SITE_ALL } = definition;
   const {
+    assertReaderTargetSuccess,
     createRequestRateLimiter,
     dedupeByUrl,
     finalizeStructuredSourceItems,
@@ -697,6 +698,7 @@
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
+      if (usesTextProxy) assertReaderTargetSuccess(response.bodyText);
       return response.bodyText;
     }
 
@@ -1037,13 +1039,14 @@
         const media = post && post._embedded && post._embedded["wp:featuredmedia"] && post._embedded["wp:featuredmedia"][0];
         const sizes = media && media.media_details && media.media_details.sizes ? media.media_details.sizes : {};
 
-        // 一覧カードに合う中サイズを優先し、無ければWordPressの標準画像へ順に落とす。
+        // 中サイズ・標準画像を優先し、埋込メディアのないTDN投稿は最後に投稿直下の代表写真を使う。
         const image = pickFirst(
           sizes["indiegraf-post-grid-medium"] && sizes["indiegraf-post-grid-medium"].source_url,
           sizes["post-thumbnail"] && sizes["post-thumbnail"].source_url,
           sizes.medium_large && sizes.medium_large.source_url,
           sizes.medium && sizes.medium.source_url,
-          media && media.source_url
+          media && media.source_url,
+          post && post.image
         );
 
         return buildRawNewsItem(site, {

@@ -125,6 +125,24 @@
     }
   }
 
+  // ReaderのHTTP 200に包まれた元サイトの4xx/5xxを、記事抽出前に取得失敗として扱う。
+  // 正式ヘッダーだけを読み、記事本文に引用された同じWarning文言は判定へ含めない。
+  function assertReaderTargetSuccess(value) {
+    const text = String(value || "").replace(/^\uFEFF/, "");
+    const markdownStart = text.search(/^Markdown Content:[ \t]*\r?$/m);
+    if (markdownStart < 0) return;
+
+    const header = text.slice(0, markdownStart);
+    if (!/^Title:[^\r\n]*\r?\n/.test(header) || !/^URL Source:[ \t]+https?:\/\/\S+[ \t]*\r?$/m.test(header)) return;
+
+    const warning = header.match(/^Warning:[ \t]+Target URL returned error ([45]\d{2})(?::[^\r\n]*)?[ \t]*\r?$/m);
+    if (!warning) return;
+    if (warning[1] === "509") {
+      throw new Error("元サイトの帯域制限（HTTP 509）により取得できませんでした");
+    }
+    throw new Error(`元サイトがHTTP ${warning[1]}を返しました`);
+  }
+
   // 取得元URLの既存query/hashを保ったまま、Readerキャッシュ更新用などの指定パラメータを設定する。
   // 不正URLは呼び出し元で通常の通信エラーとして扱えるよう、加工せず元の文字列を返す。
   function setUrlQueryParameter(value, name, parameterValue) {
@@ -345,6 +363,7 @@
   }
 
   return Object.freeze({
+    assertReaderTargetSuccess,
     createRequestRateLimiter,
     dedupeByUrl,
     extractReaderTitleCandidates,
