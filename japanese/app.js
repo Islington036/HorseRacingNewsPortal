@@ -2,6 +2,7 @@
   const definition = window.JapaneseHorseRacingPortalDefinition;
   const { CONFIG, I18N, SITE_ALL } = definition;
   const {
+    assertReaderTargetSuccess,
     createRequestRateLimiter,
     dedupeByUrl,
     extractReaderTitleCandidates,
@@ -676,6 +677,7 @@
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
+        if (usesTextProxy) assertReaderTargetSuccess(response.bodyText);
         return response.bodyText;
       } catch (error) {
         if (error.name === "AbortError" || (externalSignal && externalSignal.aborted)) {

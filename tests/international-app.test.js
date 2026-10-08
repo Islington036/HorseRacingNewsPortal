@@ -13,13 +13,15 @@ async function run() {
 
   await testResponseBodyTimeout(harness);
   await testRateLimiterResponseCompatibility(harness);
+  await testReaderUpstreamDiagnostics();
   await testDirectRequestCachePolicy(harness);
+  await testWordPressMetadataAuthority();
   await testRacingTvDetailDates(harness);
   testFinalArticleUrlGate(harness);
   await testSourceMetadataCacheMigration(harness);
   await testDailyMailMotorSportExclusion(harness);
 
-  console.log("international-app: 7 tests passed");
+  console.log("international-app: 9 tests passed");
 }
 
 // fetchのヘッダー受信後に本文が停止しても、同じAbortタイマーで打ち切れることを確認する。
@@ -90,6 +92,42 @@ async function testRateLimiterResponseCompatibility({ context, api, limiterState
   assert.equal(limiterState.firstResponse.headers.get("Retry-After"), "1");
 }
 
+// Readerの200/元509を本体と専用テスターが同じ原因で失敗させ、APIと本文中のWarningは変えない。
+async function testReaderUpstreamDiagnostics() {
+  const { api, context } = loadAppHarness();
+  const site = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES.find((entry) => entry.id === "ttrausnz");
+  const readerUrl = `https://r.jina.ai/${site.url}`;
+  const quotaBody = [
+    "Title: Quota Exceeded",
+    "",
+    `URL Source: ${site.url}`,
+    "",
+    "Warning: Target URL returned error 509: Bandwidth Limit Exceeded",
+    "",
+    "Markdown Content:",
+    "## Bandwidth Quota Exceeded"
+  ].join("\n");
+  context.fetch = async () => createTextResponse(quotaBody);
+  await assert.rejects(api.fetchSite(site), /元サイトの帯域制限.*HTTP 509/);
+  assert.equal(await api.fetchProxyText("https://api.example.test/news", {}, 100), quotaBody);
+
+  // 同じテスターコードを既存VMへ読み込み、媒体パーサーへ渡す前に上流失敗を捕捉する。
+  context.window.JapaneseHorseRacingSourceParsers = {};
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/core.js"), "utf8").replace(/^export /gm, ""), context);
+  await assert.rejects(context.runSourceTest({
+    ...site,
+    id: "ttrausnz_reader",
+    parse: context.parseTtrAusNzReader,
+    allowTextProxy: true,
+    timeoutMs: 100
+  }), /元サイトの帯域制限.*HTTP 509/);
+
+  const normalBody = quotaBody.replace("\nWarning: Target URL returned error 509: Bandwidth Limit Exceeded\n", "\n") +
+    "\nWarning: Target URL returned error 509: Bandwidth Limit Exceeded";
+  context.fetch = async () => createTextResponse(normalBody);
+  assert.equal(await api.fetchProxyText(readerUrl, {}, 100), normalBody);
+}
+
 // no-storeは媒体設定を持つ公式URLの直接取得だけへ渡し、公開プロキシには伝播させない。
 async function testDirectRequestCachePolicy({ context, api }) {
   const baseSite = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES
@@ -122,6 +160,77 @@ async function testDirectRequestCachePolicy({ context, api }) {
   assert.equal(proxyCalls.length, 1);
   assert.match(proxyCalls[0].url, /^https:\/\/proxy\.test\//);
   assert.equal(Object.prototype.hasOwnProperty.call(proxyCalls[0].options, "cache"), false);
+}
+
+// WordPressの専用結果を汎用JSONで置換せず、実際のTDN投稿形状で題名・GMT・代表写真とRSS予備経路を保つ。
+async function testWordPressMetadataAuthority() {
+  const { api, context } = loadAppHarness();
+  const config = context.window.InternationalHorseRacingPortalDefinition.CONFIG;
+  const expectedTitle = "Grade I Winner Dotsy’s Trainer John Grabowski Joins TDN Writers’ Room";
+  const post = {
+    id: 538845,
+    title: { rendered: "Grade I Winner Dotsy&#8217;s Trainer John Grabowski Joins TDN Writers&#8217; Room" },
+    link: "https://www.thoroughbreddailynews.com/grade-i-winner-dotsys-trainer-john-grabowski-joins-tdn-writers-room/",
+    date: "2026-10-07T13:16:28",
+    date_gmt: "2026-10-07T17:16:28",
+    image: "https://www.thoroughbreddailynews.com/wp-content/uploads/2026/10/tdn-writers-room.jpg",
+    _embedded: { "wp:featuredmedia": [{}] },
+    related: { title: "Embedded unrelated article", link: "https://www.thoroughbreddailynews.com/embedded-unrelated-article/", date: "2026-10-07T13:16:28", image: "https://www.thoroughbreddailynews.com/related.jpg" }
+  };
+  let body;
+  context.fetch = async () => createTextResponse(body);
+  for (const id of ["tdn_america", "tdn_europe", "anzbloodstock"]) {
+    const site = config.SITES.find((entry) => entry.id === id);
+    const sitePost = {
+      ...post,
+      link: post.link.replace("https://www.thoroughbreddailynews.com", site.baseUrl),
+      related: { ...post.related, link: post.related.link.replace("https://www.thoroughbreddailynews.com", site.baseUrl) }
+    };
+    body = JSON.stringify([sitePost]);
+    const items = await api.fetchSite(site);
+    assert.equal(items[0].title, expectedTitle);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].publishedAt.toISOString(), "2026-10-07T17:16:28.000Z");
+    assert.equal(items[0].thumbnail, post.image);
+    assert.equal(site.exclusiveStructuredJson, true);
+    assert.equal(site.cacheVersion, 1);
+  }
+
+  context.window.JapaneseHorseRacingSourceParsers = {};
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/core.js"), "utf8").replace(/^export /gm, ""), context);
+  const site = config.SITES.find((entry) => entry.id === "tdn_america");
+  const testItems = context.parseWordPressPosts(JSON.stringify([post]), site);
+  assert.equal(testItems[0].title, expectedTitle);
+  assert.equal(testItems[0].publishedAt, "2026-10-07T17:16:28Z");
+  assert.equal(testItems[0].thumbnail, post.image);
+
+  // JSON専用設定は正常APIだけに適用し、API失敗時の既存RSS抽出は残す。
+  context.DOMParser = class extends FakeDOMParser {
+    parseFromString(text, type) {
+      const doc = super.parseFromString(text, type);
+      if (type === "application/xml") {
+        doc.querySelectorAll = (selector) => selector === "item, entry" ? [{
+          querySelector(name) {
+            const value = { title: expectedTitle, link: post.link, pubDate: "Wed, 07 Oct 2026 17:16:28 GMT" }[name];
+            return value ? { textContent: value, getAttribute() { return ""; } } : null;
+          },
+          querySelectorAll() { return []; }
+        }] : [];
+      }
+      return doc;
+    }
+  };
+  const fetched = [];
+  context.fetch = async (url) => {
+    fetched.push(url);
+    if (url.includes("wp-json")) throw new Error("API unavailable");
+    return createTextResponse("<rss><channel><item>fixture</item></channel></rss>");
+  };
+  const rssItems = await api.fetchSite(site);
+  assert.ok(fetched.includes(site.feedUrl));
+  assert.equal(rssItems.length, 1);
+  assert.equal(rssItems[0].title, expectedTitle);
+  assert.equal(rssItems[0].publishedAt.toISOString(), "2026-10-07T17:16:28.000Z");
 }
 
 // キャッシュされた一覧の相対日時を信じず、先頭を含め記事詳細の正式な公開時刻だけを使う。
@@ -202,7 +311,7 @@ function testFinalArticleUrlGate({ api, context }) {
   assert.equal(api.normalizeItem({ ...raw, url: "https://www.ttrausnz.com.au/edition/2026-09-05" }, ttrSite, 0), null);
 }
 
-// 記事分類・日時を変更した2媒体だけ旧キャッシュを除き、他媒体と新形式キャッシュを保持する。
+// 記事分類・日時を修正した媒体だけ旧キャッシュを除き、他媒体と新形式キャッシュを保持する。
 async function testSourceMetadataCacheMigration({ api, context }) {
   const config = context.window.InternationalHorseRacingPortalDefinition.CONFIG;
   const straight = config.SITES.find((site) => site.id === "thestraight");
@@ -217,17 +326,20 @@ async function testSourceMetadataCacheMigration({ api, context }) {
   const now = new Date().toISOString();
   let stored = JSON.stringify({
     lastUpdatedAt: now,
-    siteLatest: { irishracing: now, thestraight: now, tdn_america: now },
+    siteLatest: { irishracing: now, thestraight: now, tdn_america: now, tdn_europe: now, anzbloodstock: now, bloodhorse: now },
     allItems: [
       { sourceId: "irishracing", url: "https://www.irishracing.com/news/example/267200" },
       { sourceId: "thestraight", url: "https://thestraight.com.au/scenic-lodge-thoroughbred-stud/" },
-      { sourceId: "tdn_america", url: "https://www.thoroughbreddailynews.com/current-racing-news/" }
+      { sourceId: "tdn_america", url: "https://www.thoroughbreddailynews.com/current-racing-news/" },
+      { sourceId: "tdn_europe", url: "https://www.thoroughbreddailynews.com/current-european-racing-news/" },
+      { sourceId: "anzbloodstock", url: "https://www.anzbloodstocknews.com/current-bloodstock-news/" },
+      { sourceId: "bloodhorse", url: "https://www.bloodhorse.com/horse-racing/articles/123456/current-racing-news" }
     ].map((item) => ({ ...item, title: "A current headline", publishedAt: now }))
   });
   context.localStorage = { getItem: () => stored, setItem: (_key, value) => { stored = value; } };
   api.loadCache();
-  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId), ["tdn_america"]);
-  assert.deepEqual(Object.keys(api.state.siteLatest), ["tdn_america"]);
+  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId), ["bloodhorse"]);
+  assert.deepEqual(Object.keys(api.state.siteLatest), ["bloodhorse"]);
 
   // フィルターを無視したAPI応答でも専用判定が除外し、汎用JSON走査から復活しない。
   context.fetch = async () => createTextResponse(JSON.stringify([
@@ -240,8 +352,11 @@ async function testSourceMetadataCacheMigration({ api, context }) {
   api.state.allItems.push(...items);
   api.saveCache();
   assert.equal(JSON.parse(stored).sourceVersions.thestraight, straight.cacheVersion);
+  for (const id of ["tdn_america", "tdn_europe", "anzbloodstock"]) {
+    assert.equal(JSON.parse(stored).sourceVersions[id], 1);
+  }
   api.loadCache();
-  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId).sort(), ["tdn_america", "thestraight"]);
+  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId).sort(), ["bloodhorse", "thestraight"]);
 }
 
 // 観測したNASCARドライバー記事だけを本体・テスター・保存済み記事から除き、競馬と正常0件を保つ。
@@ -271,7 +386,7 @@ async function testDailyMailMotorSportExclusion({ api, context }) {
   }, 0));
 
   let stored = JSON.stringify({
-    sourceVersions: { dailymail_racing: site.cacheVersion },
+    sourceVersions: { dailymail_racing: site.cacheVersion, tdn_america: 1 },
     siteLatest: { dailymail_racing: now, tdn_america: now },
     allItems: [
       { ...motorArticle, sourceId: site.id },
@@ -465,7 +580,7 @@ function createTemplateStub() {
         return [];
       },
       get textContent() {
-        return html.replace(/<[^>]*>/g, "");
+        return html.replace(/<[^>]*>/g, "").replace(/&#8217;/g, "’");
       }
     }
   };
@@ -480,6 +595,7 @@ function createTextDecoderStub() {
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
         .replace(/&quot;/g, "\"")
+        .replace(/&#8217;/g, "’")
         .replace(/&#(?:39|x27);/gi, "'");
     }
   };
