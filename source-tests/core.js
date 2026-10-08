@@ -1,6 +1,7 @@
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_ITEMS = 8;
 const {
+  assertReaderTargetSuccess,
   createRequestRateLimiter,
   isUrlHostname,
   mapWithConcurrency,
@@ -220,10 +221,12 @@ async function fetchText(url, options = {}) {
   };
 
   try {
-    const response = isUrlHostname(url, "r.jina.ai")
+    const usesTextProxy = isUrlHostname(url, "r.jina.ai");
+    const response = usesTextProxy
       ? await textProxyRateLimiter.run(requestOnce)
       : await requestOnce();
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (usesTextProxy) assertReaderTargetSuccess(response.bodyText);
     return response.bodyText;
   } catch (error) {
     if (error.name === "AbortError") throw new Error("取得がタイムアウトしました");
@@ -727,7 +730,7 @@ export function parseAtom(text) {
   });
 }
 
-// WordPress RESTの埋込featured mediaから、一覧カードに適した画像サイズを優先して選ぶ。
+// 本体と同じWordPress画像優先順を使い、埋込メディアが欠ける投稿は直下の代表写真へ落とす。
 export function parseWordPressPosts(text, source) {
   const posts = JSON.parse(text);
   if (!Array.isArray(posts)) throw new Error("WordPress RESTの投稿配列を取得できませんでした");
@@ -753,7 +756,8 @@ export function parseWordPressPosts(text, source) {
         sizes["post-thumbnail"] && sizes["post-thumbnail"].source_url,
         sizes.medium_large && sizes.medium_large.source_url,
         sizes.medium && sizes.medium.source_url,
-        media && media.source_url
+        media && media.source_url,
+        post && post.image
       )
     };
   });
