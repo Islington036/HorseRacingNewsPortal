@@ -22,6 +22,7 @@
     isTtrAusNzFixedPage,
     parseInternationalDate,
     parseIrishRacingDateTime,
+    parseTtrEditionDate,
     pickRacenetReaderTitle,
     readZonedParts: timeZoneParts,
     zonedDateToUtc
@@ -705,8 +706,9 @@
 
     const PARSERS = {
       generic(doc, site, rawText, data) {
-        // Irish Racingの一覧は専用抽出器だけで地域時刻を確定し、汎用抽出から端末時刻の候補を再混入させない。
-        if (site.id === "irishracing") return extractSiteSpecificItems(doc, site, rawText, data);
+        // 専用抽出で照合した見出し・日時を正本にし、汎用Markdownの見出しや近傍リンクを再混入させない。
+        // TTRではセクション名「Latest Featured Articles」が直後の記事URLへ結び付くため、汎用抽出を併用しない。
+        if (site.id === "irishracing" || site.id === "ttrausnz") return extractSiteSpecificItems(doc, site, rawText, data);
         // 専用JSON抽出で除外した投稿を、本文内のMarkdownや埋込データから復活させない。
         // RSS予備経路はdataがnullなので、従来どおり下のXML抽出へ進む。
         if (site.exclusiveStructuredJson && data) return extractSiteSpecificItems(doc, site, rawText, data);
@@ -1321,7 +1323,9 @@
         items.push({
           title,
           url,
-          publishedAt: parseDateFromUrl(url) || parseDate(match[3]),
+          // 公開時刻は未配信。表示用のエディション暦日と、期間判定用の地域日付を分けて保持する。
+          editionDate: match[3],
+          publishedAt: parseTtrEditionDate(match[3]),
           // 現在のReader一覧には記事写真が含まれないため、空値は本体のダミー画像へ委ねる。
           thumbnail: "",
           source: site.name
@@ -1984,6 +1988,7 @@
         title,
         url,
         publishedAt,
+        ...(raw.editionDate ? { editionDate: raw.editionDate } : {}),
         dateEstimated: Boolean(raw.dateEstimated),
         thumbnail: resolveThumbnail(raw.thumbnail, site, url),
         sortIndex: index
@@ -2680,8 +2685,12 @@
 
     // 1件分のニュースカードHTMLを組み立てる。
     function renderCard(item, index = 0) {
-      const dateText = item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt);
-      const dateTitle = item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
+      // TTRのエディション日は日付精度のまま示し、並べ替え用の午前0時を公開時刻として表示しない。
+      const editionDate = item.sourceId === "ttrausnz" && item.editionDate;
+      const dateText = editionDate || (item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt));
+      const dateTitle = editionDate
+        ? t("editionDateTitle", { date: editionDate })
+        : item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
       const isNew = state.animatedItemIds.has(item.id);
       const className = isNew ? "news-card is-new" : "news-card";
       const animationStyle = isNew ? ` style="--appear-delay: ${Math.min(index, 10) * 28}ms"` : "";
@@ -2693,7 +2702,7 @@
             <div class="meta">
               <span class="source-badge">${escapeHtml(item.source)}</span>
               <span class="region-badge">${escapeHtml(getRegionLabel(item.region))}</span>
-              <time datetime="${item.publishedAt.toISOString()}" title="${escapeHtml(dateTitle)}">${escapeHtml(dateText)}</time>
+              <time datetime="${escapeHtml(editionDate || item.publishedAt.toISOString())}" title="${escapeHtml(dateTitle)}">${escapeHtml(dateText)}</time>
             </div>
           </div>
         </a>
@@ -2827,11 +2836,16 @@
 
         const latestDate = new Date(latestIso);
         if (Number.isNaN(latestDate.getTime())) return null;
+        // TTRの最新検出もエディション暦日で示し、内部の並べ替え時刻をJSTの公開時刻へ見せない。
+        const editionParts = site.id === "ttrausnz" ? timeZoneParts(latestDate, "Australia/Sydney") : null;
+        const latestText = editionParts
+          ? `${editionParts.year}-${String(editionParts.month).padStart(2, "0")}-${String(editionParts.day).padStart(2, "0")}`
+          : formatDateTime(latestDate);
 
         return {
           type: "note",
           site: site.name,
-          message: t("latestDetected", { days: state.activeDaysBack, date: formatDateTime(latestDate) })
+          message: t("latestDetected", { days: state.activeDaysBack, date: latestText })
         };
       }).filter(Boolean);
     }
