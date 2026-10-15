@@ -20,6 +20,7 @@ const {
   isAllowedWordPressPost,
   isTtrAusNzFixedPage,
   parseInternationalDate,
+  parseTtrEditionDate,
   readZonedParts: timeZoneParts,
   zonedDateToUtc
 } = window.InternationalHorseRacingSourceParsers;
@@ -860,8 +861,9 @@ export function parseTtrAusNzReader(text) {
     items.push({
       title,
       url,
-      // 本体のparseDateFromUrlと同じく、タイムゾーン指定なしのローカル日付午前0時として扱う。
-      publishedAt: `${match[3]}T00:00:00`,
+      // 本体と同じく、エディション暦日は表示用、Sydney午前0時は並べ替え用として分ける。
+      editionDate: match[3],
+      publishedAt: parseTtrEditionDate(match[3]),
       // Reader一覧に画像がない場合は空値のまま返し、本体のダミー表示を正常系として確認する。
       thumbnail: ""
     });
@@ -938,7 +940,7 @@ function normalizeItem(item, source) {
   const thumbnail = absoluteUrl(item.thumbnail, source.baseUrl || source.url);
   const publishedAt = item.publishedAt ? new Date(item.publishedAt) : null;
 
-  return { title, url, thumbnail, publishedAt };
+  return { title, url, thumbnail, publishedAt, ...(item.editionDate ? { editionDate: item.editionDate } : {}) };
 }
 
 // ブラウザが実際に表示できる画像かを確認し、遅い画像はテスト全体を止めず失敗扱いにする。

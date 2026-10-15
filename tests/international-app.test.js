@@ -15,6 +15,7 @@ async function run() {
   await testRateLimiterResponseCompatibility(harness);
   await testReaderUpstreamDiagnostics();
   await testTtrTitleSymbolMatching();
+  await testTtrFeaturedMetadataAuthority();
   await testDirectRequestCachePolicy(harness);
   await testWordPressMetadataAuthority();
   await testRacingTvDetailDates(harness);
@@ -22,7 +23,7 @@ async function run() {
   await testSourceMetadataCacheMigration(harness);
   await testDailyMailMotorSportExclusion(harness);
 
-  console.log("international-app: 10 tests passed");
+  console.log("international-app: 11 tests passed");
 }
 
 // fetchのヘッダー受信後に本文が停止しても、同じAbortタイマーで打ち切れることを確認する。
@@ -146,7 +147,8 @@ async function testTtrTitleSymbolMatching() {
   assert.equal(items.length, 2);
   assert.equal(items[0].title, title);
   assert.equal(items[0].url, articleUrl);
-  assert.equal(items[0].publishedAt.getTime(), new Date(2026, 9, 9).getTime());
+  assert.equal(items[0].publishedAt.toISOString(), "2026-10-08T13:00:00.000Z");
+  assert.equal(items[0].editionDate, "2026-10-09");
   assert.equal(items[1].title, "Friday racing preview");
 
   const extractTitle = sourceParsers.extractTtrTitleMatchingSlug;
@@ -161,7 +163,8 @@ async function testTtrTitleSymbolMatching() {
   assert.equal(testItems.length, 2);
   assert.equal(testItems[0].title, title);
   assert.equal(testItems[0].url, articleUrl);
-  assert.equal(testItems[0].publishedAt, "2026-10-09T00:00:00");
+  assert.equal(testItems[0].publishedAt.toISOString(), "2026-10-08T13:00:00.000Z");
+  assert.equal(testItems[0].editionDate, "2026-10-09");
   assert.equal(testItems[0].thumbnail, "");
   const mismatch = `##### [Breaking news ${title}](${articleUrl})`;
   assert.equal(api.extractTtrAusNzMarkdownItems(mismatch, site).length, 0);
@@ -173,6 +176,64 @@ async function testTtrTitleSymbolMatching() {
     published_date: "2026-10-09T00:00:00Z"
   }]));
   assert.equal(sportingLifeItems[0].url, "/racing/news/inglis-digital-ninja-valued-at-5-5-million-after-1-share-sells/123");
+}
+
+// 実カードの見出し・暦日を正本にし、汎用候補や端末タイムゾーンで上書きしない。
+async function testTtrFeaturedMetadataAuthority() {
+  const { api, context } = loadAppHarness();
+  const site = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES.find((entry) => entry.id === "ttrausnz");
+  const title = "Records tumble as three colts share $600,000 top billing at Inglis Ready2Race";
+  const articleUrl = `${site.baseUrl}/edition/2026-10-16/records-tumble-as-three-colts-share-dollar600000-top-billing-at-inglis-ready2race`;
+  const listing = [
+    "## Latest Featured Articles",
+    "",
+    `#### [${title} The Inglis Ready2Race Sale recorded its strongest result yet on Thursday. Friday 16th October](${articleUrl})`,
+    `![Image](https://images.example/featured.jpg)`
+  ].join("\n");
+  context.fetch = async () => createTextResponse(listing);
+  const items = await api.fetchSite(site);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, title);
+  assert.equal(items[0].url, articleUrl);
+  assert.equal(items[0].thumbnail, context.window.InternationalHorseRacingPortalDefinition.CONFIG.FALLBACK_THUMBNAIL);
+  assert.equal(sourceParsers.extractTtrTitleMatchingSlug(`${title} Summary follows`, new URL(articleUrl).pathname.split("/").pop()), title);
+
+  const originalTimeZone = process.env.TZ;
+  try {
+    for (const timeZone of ["UTC", "Asia/Tokyo"]) {
+      process.env.TZ = timeZone;
+      const normalized = (await api.fetchSite(site))[0];
+      assert.equal(normalized.publishedAt.toISOString(), "2026-10-15T13:00:00.000Z");
+      assert.equal(normalized.editionDate, "2026-10-16");
+      assert.match(api.renderCard(normalized), /<time datetime="2026-10-16"[^>]*>2026-10-16<\/time>/);
+    }
+  } finally {
+    if (originalTimeZone === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTimeZone;
+  }
+
+  context.window.JapaneseHorseRacingSourceParsers = {};
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/core.js"), "utf8").replace(/^export /gm, ""), context);
+  const tested = context.parseTtrAusNzReader(listing)[0];
+  assert.equal(tested.title, title);
+  assert.equal(tested.editionDate, "2026-10-16");
+  assert.equal(tested.publishedAt.toISOString(), items[0].publishedAt.toISOString());
+
+  // 新形式キャッシュを再読込しても、暦日精度と表示が失われない。
+  let stored;
+  context.localStorage = { getItem: () => stored, setItem: (_key, value) => { stored = value; } };
+  // 実行日から古くなったfixtureはloadCacheの期間フィルター対象になるため、同じ精度の現在日へ置き換える。
+  const currentParts = sourceParsers.readZonedParts(new Date(), "Australia/Sydney");
+  const currentDate = `${currentParts.year}-${String(currentParts.month).padStart(2, "0")}-${String(currentParts.day).padStart(2, "0")}`;
+  api.state.allItems = [{ ...items[0], editionDate: currentDate, publishedAt: sourceParsers.parseTtrEditionDate(currentDate) }];
+  api.saveCache();
+  api.loadCache();
+  assert.equal(api.state.allItems[0].editionDate, currentDate);
+  assert.match(api.renderCard(api.state.allItems[0]), new RegExp(`<time datetime="${currentDate}"`));
+
+  // 専用照合を通らないカードがセクション名として復活せず、取得失敗として診断できる。
+  context.fetch = async () => createTextResponse(listing.replace(title, "A mismatched headline"));
+  await assert.rejects(api.fetchSite(site), /ヘッドラインを抽出できませんでした/);
 }
 
 // no-storeは媒体設定を持つ公式URLの直接取得だけへ渡し、公開プロキシには伝播させない。
@@ -373,13 +434,14 @@ async function testSourceMetadataCacheMigration({ api, context }) {
   const now = new Date().toISOString();
   let stored = JSON.stringify({
     lastUpdatedAt: now,
-    siteLatest: { irishracing: now, thestraight: now, tdn_america: now, tdn_europe: now, anzbloodstock: now, bloodhorse: now },
+    siteLatest: { irishracing: now, thestraight: now, tdn_america: now, tdn_europe: now, anzbloodstock: now, ttrausnz: now, bloodhorse: now },
     allItems: [
       { sourceId: "irishracing", url: "https://www.irishracing.com/news/example/267200" },
       { sourceId: "thestraight", url: "https://thestraight.com.au/scenic-lodge-thoroughbred-stud/" },
       { sourceId: "tdn_america", url: "https://www.thoroughbreddailynews.com/current-racing-news/" },
       { sourceId: "tdn_europe", url: "https://www.thoroughbreddailynews.com/current-european-racing-news/" },
       { sourceId: "anzbloodstock", url: "https://www.anzbloodstocknews.com/current-bloodstock-news/" },
+      { sourceId: "ttrausnz", url: "https://www.ttrausnz.com.au/edition/2026-10-16/current-bloodstock-news" },
       { sourceId: "bloodhorse", url: "https://www.bloodhorse.com/horse-racing/articles/123456/current-racing-news" }
     ].map((item) => ({ ...item, title: "A current headline", publishedAt: now }))
   });
@@ -399,7 +461,7 @@ async function testSourceMetadataCacheMigration({ api, context }) {
   api.state.allItems.push(...items);
   api.saveCache();
   assert.equal(JSON.parse(stored).sourceVersions.thestraight, straight.cacheVersion);
-  for (const id of ["tdn_america", "tdn_europe", "anzbloodstock"]) {
+  for (const id of ["tdn_america", "tdn_europe", "anzbloodstock", "ttrausnz"]) {
     assert.equal(JSON.parse(stored).sourceVersions[id], 1);
   }
   api.loadCache();
@@ -521,6 +583,7 @@ function loadAppHarness() {
       extractTtrAusNzMarkdownItems,
       isCandidateArticleUrl,
       normalizeItem,
+      renderCard,
       loadCache,
       saveCache,
       state
