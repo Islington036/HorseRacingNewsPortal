@@ -475,17 +475,31 @@
     return "";
   }
 
-  // TTR固有の通貨・百分率・小数表記をslugの綴りへ揃える。Sporting Life等の汎用規則とは分離する。
+  // TTR固有の通貨・百分率・数値区切りをslugの綴りへ揃える。Sporting Life等の汎用規則とは分離する。
   function normalizeTtrTitleSlug(value) {
     return String(value || "")
       .toLowerCase()
       .replace(/\$/g, "dollar")
       .replace(/%/g, "percent")
-      .replace(/(\d)\.(?=\d)/g, "$1")
+      .replace(/(\d)[.,](?=\d)/g, "$1")
       .replace(/&/g, " and ")
       .replace(/['’]/g, "")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
+  }
+
+  // TTRのエディション暦日をSydneyの午前0時へ変換し、期間判定・並べ替えだけに使う。
+  // 元データには公開時刻がないため、画面にはこのDateの時刻ではなく元の暦日を表示する。
+  function parseTtrEditionDate(value) {
+    const match = String(value || "").match(/^(20\d{2})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return zonedDateToUtc({
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+      hour: 0,
+      minute: 0
+    }, "Australia/Sydney");
   }
 
   function isTtrAusNzFixedPage(slug) {
@@ -508,6 +522,7 @@
     parseIrishRacingDateTime,
     parseInternationalDate,
     parseExplicitTimezoneDate,
+    parseTtrEditionDate,
     pickRacenetReaderTitle,
     readZonedParts,
     zonedDateToUtc

@@ -386,7 +386,7 @@ async function testSanspoSitemapRoutesRequirePublicArticles() {
   }
 }
 
-async function testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(readerText = "Title: エラー\nただいまアクセスが集中しています") {
+async function testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(readerText = "Title: エラー\nただいまアクセスが集中しています", headline = "フォールバックで取得した公式見出し", cachedValue = null) {
   class ErrorDomParser {
     parseFromString() {
       return {
@@ -405,7 +405,7 @@ async function testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(reader
     baseUrl: "https://tospo-keiba.jp",
     readerCacheBust: true
   };
-  const harness = createHarness(null, {
+  const harness = createHarness(cachedValue, {
     DOMParser: ErrorDomParser,
     sites: [site],
     configure(config) {
@@ -420,7 +420,7 @@ async function testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(reader
       if (url === site.sitemapTextFallbackUrl) {
         return Promise.resolve(createResponseText(
           "https://tospo-keiba.jp/breaking\\_news/75702 東スポ競馬 ja " +
-          `${new Date().toISOString()} フォールバックで取得した公式見出し`
+          `${new Date().toISOString()} ${headline}`
         ));
       }
       return Promise.reject(new Error(`unexpected request: ${url}`));
@@ -431,8 +431,28 @@ async function testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(reader
 
   assert.equal(harness.portal.getSnapshot().itemCount, 1);
   assert.equal(harness.portal.getSnapshot().errorCount, 0);
-  assert.match(harness.elements.get("#newsList").innerHTML, /フォールバックで取得した公式見出し/);
+  assert.ok(harness.elements.get("#newsList").innerHTML.includes(headline));
   assert.match(harness.elements.get("#newsList").innerHTML, /class="thumb thumb-fallback"/, "一覧Readerが失敗した記事は共通ダミー画像を表示する");
+  return harness;
+}
+
+// 実見出しの先頭「競馬」をカテゴリ扱いで消さず、同URLの欠けた保存済み見出しも次回成功時に置き換える。
+async function testTospoHeadlinePreservesKeibaPrefix() {
+  const headline = "競馬の神様がくれた地道な積み重ねへの「ご褒美」 福永調教師1日3場メイン制覇の偉業達成";
+  const articleUrl = "https://tospo-keiba.jp/breaking_news/75702";
+  const cachedTitle = headline.slice(2);
+  const harness = await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards(undefined, headline, {
+    siteLatest: {},
+    allItems: [{
+      ...cachedItem("tospo", "旧見出し"),
+      id: `tospo:${articleUrl}`,
+      url: articleUrl,
+      title: cachedTitle
+    }]
+  });
+  const saved = JSON.parse(harness.storage.get("keiba-news-portal-cache-v2"));
+  assert.equal(saved.allItems.length, 1);
+  assert.equal(saved.allItems[0].title, headline);
 }
 
 function createResponseText(text) {
@@ -452,8 +472,9 @@ async function run() {
   await testSanspoSitemapRoutesRequirePublicArticles();
   await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards();
   await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards("[article](https://tospo-keiba.jp/breaking_news/75702)");
+  await testTospoHeadlinePreservesKeibaPrefix();
   await testSourceDetailsKeepFailuresVisible();
-  console.log("japanese-refresh: 8 tests passed");
+  console.log("japanese-refresh: 9 tests passed");
 }
 
 run().catch((error) => {
