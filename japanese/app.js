@@ -1200,10 +1200,10 @@
       return item.publishedAt.getTime() >= cutoff && item.publishedAt.getTime() <= now.getTime() + 60 * 60 * 1000;
     }
 
+    // 共通整形では本文の語句を保ち、媒体固有のカテゴリ名を見出し先頭から無条件に削らない。
     function cleanTitle(value) {
       return String(value || "")
         .replace(/\s+/g, " ")
-        .replace(/^競馬\s*/, "")
         .replace(/\s*\[?記事へ\]?\s*$/g, "")
         // 報知などでリンク内に混ざる配信時刻を最後尾から落とす。タイトル中の数字やレース名は消さない。
         .replace(/\s*(?:\d{4}年\s*\d{1,2}月\s*\d{1,2}日|\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}月\s*\d{1,2}日)\s+\d{1,2}:\d{2}\s*$/g, "")
