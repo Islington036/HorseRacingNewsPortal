@@ -333,10 +333,12 @@
           ...site,
           // Sitemap/RSS/APIをJina Readerへ渡すとXML/JSON構造がMarkdown化され、空リンク見出しなどのノイズが混ざる。
           // Jinaは公式ページHTMLを読む最後の手段としてだけ使う。
-          allowTextProxy:
+          // 未指定は必ずfalseへ揃える。undefinedのままだとURL候補生成の既定値でReaderが復活する。
+          allowTextProxy: Boolean(
             (sourceUrl === site.url && site.allowPageTextProxy !== false) ||
             (sourceUrl === site.sitemapUrl && site.allowSitemapTextProxy) ||
-            (sourceUrl === site.apiUrl && site.allowApiTextProxy),
+            (sourceUrl === site.apiUrl && site.allowApiTextProxy)
+          ),
           preferTextProxy:
             sourceUrl === site.url
               ? site.preferTextProxy

@@ -22,8 +22,61 @@ async function run() {
   testFinalArticleUrlGate(harness);
   await testSourceMetadataCacheMigration(harness);
   await testDailyMailMotorSportExclusion(harness);
+  await testScmpRequiresStructuredDates();
 
-  console.log("international-app: 11 tests passed");
+  console.log("international-app: 12 tests passed");
+}
+
+// 日時のないコラムへ隣の記事画像の日付を結び付けるReader後退を禁止し、誤った旧キャッシュだけを除く。
+async function testScmpRequiresStructuredDates() {
+  const { api, context } = loadAppHarness();
+  const config = context.window.InternationalHorseRacingPortalDefinition.CONFIG;
+  const site = config.SITES.find((entry) => entry.id === "scmp_racing");
+  const columnUrl = "https://www.scmp.com/sport/racing/article/3334378/no-calandagan-leaves-hong-kong-cup-wanting-hkir-fields-still-excite";
+  const listing = [
+    "Title: SCMP", `URL Source: ${site.url}`, "", "Markdown Content:",
+    `### [No Calandagan leaves Hong Kong Cup wanting, but HKIR fields still excite](${columnUrl})`,
+    "", `[](${site.url})`, "",
+    "[![Image](https://cdn.i-scmp.com/images/canvas/2026/10/22/photo.jpg)](https://www.scmp.com/sport/racing/article/3371737/neighbour)",
+    "", "[Hong Kong racing](https://www.scmp.com/topics/hong-kong-racing)",
+    "### [Neighbour article](https://www.scmp.com/sport/racing/article/3371737/neighbour)", "", "22 Oct 2026 - 1:02 PM"
+  ].join("\n");
+  const fetched = [];
+  context.fetch = async (url) => {
+    fetched.push(url);
+    if (url.includes("api.rss2json.com")) throw new Error("RSS API unavailable");
+    return createTextResponse(listing);
+  };
+  await assert.rejects(api.fetchSite(site), /RSS API unavailable/);
+  assert.ok(fetched.every((url) => !url.includes("r.jina.ai")), "日時未配信の一覧Readerへ後退しない");
+
+  const now = new Date().toISOString();
+  let stored = JSON.stringify({
+    siteLatest: { scmp_racing: now, bloodhorse: now },
+    allItems: [
+      { sourceId: "scmp_racing", url: columnUrl },
+      { sourceId: "bloodhorse", url: "https://www.bloodhorse.com/horse-racing/articles/123456/current-news" }
+    ].map((item) => ({ ...item, title: "A current headline", publishedAt: now }))
+  });
+  context.localStorage = { getItem: () => stored, setItem: (_key, value) => { stored = value; } };
+  api.loadCache();
+  assert.deepEqual(Array.from(api.state.allItems, (item) => item.sourceId), ["bloodhorse"]);
+  assert.deepEqual(Object.keys(api.state.siteLatest), ["bloodhorse"]);
+
+  context.fetch = async () => createTextResponse(JSON.stringify({ status: "ok", items: [{
+    title: "Current racing headline", link: "https://www.scmp.com/sport/racing/article/3371737/current-news",
+    pubDate: "2026-10-22 05:02:00", thumbnail: "https://cdn.i-scmp.com/news.jpg"
+  }] }));
+  const items = await api.fetchSite(site);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].publishedAt.toISOString(), "2026-10-22T05:02:00.000Z");
+  // 日時変換の固定例と、実行日から3日以内だけ残すキャッシュ検証を分離する。
+  items[0].publishedAt = new Date(now);
+  api.state.allItems.push(...items);
+  api.saveCache();
+  assert.equal(JSON.parse(stored).sourceVersions.scmp_racing, 1);
+  api.loadCache();
+  assert.ok(api.state.allItems.some((item) => item.sourceId === "scmp_racing"), "新形式の正常キャッシュは保持する");
 }
 
 // fetchのヘッダー受信後に本文が停止しても、同じAbortタイマーで打ち切れることを確認する。
