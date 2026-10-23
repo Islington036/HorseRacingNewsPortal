@@ -1,5 +1,5 @@
 import { runSourceTest } from "./core.js?v=20261016-ttr-edition-metadata";
-import { SOURCES } from "./sources.js?v=20261016-ttr-edition-metadata";
+import { SOURCES } from "./sources.js?v=20261023-sanspo-news-listing";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
