@@ -140,7 +140,9 @@
         // Readerは画像・完全見出し・日時を安定して返す一方、後続の公開CORSプロキシは長時間失敗する。
         // textProxyOnlyで既知の失敗経路を除き、更新全体がタイムアウト待ちになることを防ぐ。
         { id: "loveracing_nz", name: "LOVERACING.NZ", region: "new-zealand", url: "https://loveracing.nz/news/articles/racing", baseUrl: "https://loveracing.nz", parser: "generic", pathPrefixes: ["/news/"], pathHints: ["/news/"], excludePathHints: ["/news/articles/", "/news/videos/", "/news/photos/"], preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000 },
-        { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", apiUrl: SCMP_RACING_RSS_API, baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true, tryDirect: true, rss2Json: true, exclusiveStructuredJson: true }
+        // 一覧Readerの日時なしコラムへ隣の記事画像パスの日付が混入するため、正式pubDateを持つRSS変換だけを使う。
+        // 旧Reader由来の誤日時キャッシュはSCMPだけ更新し、API障害を正常な記事取得として扱わない。
+        { id: "scmp_racing", name: "SCMP Racing", region: "hong-kong", url: "https://www.scmp.com/sport/racing/news", apiUrl: SCMP_RACING_RSS_API, baseUrl: "https://www.scmp.com", parser: "generic", pathHints: ["/sport/racing/"], tryDirect: true, rss2Json: true, exclusiveStructuredJson: true, structuredSourcesOnly: true, cacheVersion: 1 }
       ]
     };
 

@@ -19,7 +19,7 @@ const dailyMailRacingSite = internationalConfig.SITES.find((site) => site.id ===
 const scmpRacingSite = internationalConfig.SITES.find((site) => site.id === "scmp_racing");
 const thoroughbredRacingRss = "https://www.thoroughbredracing.com/rss.xml";
 const thoroughbredRacingRssApi = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(thoroughbredRacingRss);
-const { extractSponichiReaderItems } = window.JapaneseHorseRacingSourceParsers;
+const { extractSanspoReaderItems, extractSponichiReaderItems } = window.JapaneseHorseRacingSourceParsers;
 
 // 各featureブランチで、実装対象の媒体だけをここへ追加する。
 // テストランナーは選択された1設定だけをrunSourceTestへ渡すため、全媒体の一括更新は発生しない。
@@ -152,23 +152,24 @@ export const SOURCES = [
   },
   {
     id: "sanspo_keiba_sitemap_reader",
-    name: "サンスポ競馬 Sitemap + Reader",
-    url: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
-    baseUrl: "https://www.sanspo.com",
-    allowedOrigins: ["https://www.sanspo.com"],
-    pathPrefixes: ["/race/article/"],
-    // 本体と同じ公開記事だけを補完枠へ入れ、会員ページによる枠の消費を防ぐ。
+    name: "サンスポ競馬 公開ニュース Reader",
+    url: sanspoSite.url,
+    baseUrl: sanspoSite.baseUrl,
+    allowedOrigins: [sanspoSite.baseUrl],
+    // 取得済みブックマークとの互換性のためIDは維持し、抽出器は本体と共有する。
     articlePathPattern: sanspoSite.articlePathPattern,
-    parse: parseNewsSitemap,
-    tryDirect: true,
+    parse: extractSanspoReaderItems,
     allowTextProxy: true,
-    hydrateFromReader: true,
-    hydrationLimit: 8,
-    hydrationConcurrency: 2,
-    hydrationTimeoutMs: 20000,
+    preferTextProxy: true,
+    textProxyOnly: true,
+    requiredRoute: "text-proxy",
+    timeoutMs: japaneseConfig.TITLE_HYDRATION_TIMEOUT_MS,
+    maxItems: 18,
+    requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
-    minimumImageCoverage: 1
+    // 元記事に写真がないカードと配信元のプレースホルダーは、本体のダミー画像で表示する。
+    minimumImageCoverage: 0
   },
   {
     id: "bloodhorse_reader",

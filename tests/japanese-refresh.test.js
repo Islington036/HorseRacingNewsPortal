@@ -247,142 +247,81 @@ async function testSourceDetailsKeepFailuresVisible() {
   assert.equal(details.open, true);
 }
 
-async function testSanspoFiltersMemberPagesBeforeHydrationLimit() {
-  const basicUrls = [
-    "https://www.sanspo.com/race/article/basic/20260905-AAAAAAAAAAAAAAAAAAAAAAAAAA/",
-    "https://www.sanspo.com/race/article/basic/20260905-BBBBBBBBBBBBBBBBBBBBBBBBBB/"
-  ];
-  const generalUrls = [
-    "https://www.sanspo.com/race/article/general/20260905-CCCCCCCCCCCCCCCCCCCCCCCCCC/",
-    "https://www.sanspo.com/race/article/general/20260905-DDDDDDDDDDDDDDDDDDDDDDDDDD/"
-  ];
+// 本番の媒体設定を使い、公開ニュースの一覧Readerだけで表示まで完了することを確認する。
+async function testSanspoUsesPublicNewsReaderListing() {
+  const articleUrl = "https://www.sanspo.com/race/article/general/20261023-NEWS/";
   const requestedUrls = [];
-
-  class SitemapDomParser {
-    parseFromString() {
-      const urls = [...basicUrls, ...generalUrls];
-      return {
-        querySelector() { return null; },
-        getElementsByTagNameNS(_namespace, localName) {
-          if (localName !== "url") return [];
-          return urls.map((url) => ({
-            getElementsByTagNameNS(_childNamespace, childLocalName) {
-              return childLocalName === "loc" ? [{ textContent: url }] : [];
-            }
-          }));
-        }
-      };
-    }
-  }
-
-  const site = {
-    id: "sanspo",
-    name: "サンスポ",
-    url: "https://www.sanspo.com/race/keiba/",
-    sitemapUrl: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
-    baseUrl: "https://www.sanspo.com",
-    articlePathPattern: /^\/race\/article\/general\/20\d{6}-[A-Z0-9]+\/?$/i,
-    detailHydrationLimit: 2,
-    detailHydrationConcurrency: 2
-  };
+  const readerUrl = "https://reader.example/sanspo-listing";
+  const configuredWindow = {};
+  vm.runInNewContext(CONFIG_SOURCE, { window: configuredWindow });
+  const site = configuredWindow.JapaneseHorseRacingPortalDefinition.CONFIG.SITES.find((item) => item.id === "sanspo");
+  const date = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString()
+    .slice(0, 16).replace(/-/g, "/").replace("T", " ");
   const harness = createHarness(null, {
-    DOMParser: SitemapDomParser,
     sites: [site],
     configure(config) {
-      config.CORS_PROXY = () => "https://proxy.example/sanspo-sitemap";
-      config.CORS_PROXY_FALLBACKS = [];
-      config.TEXT_PROXY = (url) => `https://reader.example/${encodeURIComponent(url)}`;
+      config.TEXT_PROXY = () => readerUrl;
     },
     fetch(url) {
       requestedUrls.push(url);
-      if (url === site.sitemapUrl || url === "https://proxy.example/sanspo-sitemap") {
-        return Promise.resolve(createResponseText("sitemap"));
-      }
-
-      const articleUrl = decodeURIComponent(url.replace("https://reader.example/", ""));
-      const articleId = articleUrl.includes("CCCC") ? "C" : "D";
       return Promise.resolve(createResponseText([
-        `Title: サンスポ公開記事${articleId}`,
-        "",
-        `URL Source: ${articleUrl}`,
-        "",
-        `Published Time: ${new Date().toISOString()}`
+        "Published Time: Mon, 18 Aug 2025 05:27:27 GMT",
+        "## 中央競馬ニュース",
+        `### [サンスポ最新公開記事](${articleUrl})`,
+        date,
+        "## 特集",
+        "### [固定ガイド](https://www.sanspo.com/race/article/general/20260424-GUIDE/)",
+        date
       ].join("\n")));
     }
   });
 
   await harness.portal.refresh();
 
-  assert.equal(harness.portal.getSnapshot().itemCount, 2);
-  assert.ok(generalUrls.every((url) => requestedUrls.some((requested) => requested.includes(encodeURIComponent(url)))));
-  assert.ok(basicUrls.every((url) => requestedUrls.every((requested) => !requested.includes(encodeURIComponent(url)))));
+  assert.deepEqual(requestedUrls, [readerUrl]);
+  assert.equal(harness.portal.getSnapshot().itemCount, 1);
+  assert.equal(harness.portal.getSnapshot().errorCount, 0);
+  const saved = JSON.parse(harness.storage.get("keiba-news-portal-cache-v2"));
+  assert.equal(saved.allItems[0].url, articleUrl);
+  assert.equal(saved.allItems[0].publishedAt, new Date(`${date.replace(/\//g, "-").replace(" ", "T")}:00+09:00`).toISOString());
+  assert.match(harness.elements.get("#newsList").innerHTML, /サンスポ最新公開記事/);
+  assert.match(harness.elements.get("#newsList").innerHTML, /thumb-fallback/);
+  assert.doesNotMatch(harness.elements.get("#newsList").innerHTML, /固定ガイド/);
 }
 
-// サンスポ専用取得は直接成功を優先し、HTTP 200の候補0件も次へ進め、全経路失敗時は前回記事を保持する。
-async function testSanspoSitemapRoutesRequirePublicArticles() {
+// Reader取得失敗とHTTP 200の抽出0件は区別して失敗扱いにし、どちらも前回記事・更新時刻を保つ。
+async function testSanspoReaderFailureOrEmptyKeepsCache() {
   const articleUrl = "https://www.sanspo.com/race/article/general/20261002-AAAAAAAAAAAAAAAAAAAAAAAAAA/";
   const site = {
     id: "sanspo", name: "サンスポ", baseUrl: "https://www.sanspo.com",
     url: "https://www.sanspo.com/race/keiba/",
-    sitemapUrl: "https://www.sanspo.com/feeds/sitemap-race-keiba/?outputType=xml&from=0",
-    detailHydrationLimit: 8, detailHydrationConcurrency: 2
+    parser: "sanspo", readerListing: true
   };
-  const sitemap = `<urlset><url><loc>${articleUrl}</loc></url></urlset>`;
-  const firstProxy = "https://proxy.example/first";
-  const secondProxy = "https://proxy.example/second";
-  const readerUrl = (url) => `https://reader.example/${encodeURIComponent(url)}`;
-  const sitemapRoutes = [site.sitemapUrl, firstProxy, secondProxy, readerUrl(site.sitemapUrl)];
-  class SitemapDomParser {
-    parseFromString(text) {
-      return {
-        querySelector(selector) { return selector === "parsererror" && !text.startsWith("<") ? {} : null; },
-        getElementsByTagNameNS(_namespace, localName) {
-          if (localName !== "url") return [];
-          return [...text.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => ({
-            getElementsByTagNameNS(_childNamespace, childLocalName) {
-              return childLocalName === "loc" ? [{ textContent: match[1] }] : [];
-            }
-          }));
-        }
-      };
-    }
-  }
+  const readerUrl = "https://reader.example/sanspo-listing";
 
-  for (const successRoute of [0, 2, 3, -1]) {
+  for (const emptyResponse of [false, true]) {
     const requestedUrls = [];
     const lastUpdatedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const oldItem = { ...cachedItem("sanspo", "前回サンスポ記事"), url: articleUrl, source: "サンスポ" };
     const harness = createHarness({ lastUpdatedAt, siteLatest: {}, allItems: [oldItem] }, {
-      DOMParser: SitemapDomParser, sites: [site],
+      sites: [site],
       configure(config) {
-        config.CORS_PROXY = () => firstProxy;
-        config.CORS_PROXY_FALLBACKS = [() => secondProxy];
-        config.TEXT_PROXY = readerUrl;
-        config.TEXT_PROXY_MIN_INTERVAL_MS = 0;
+        config.TEXT_PROXY = () => readerUrl;
       },
       fetch(url) {
         requestedUrls.push(url);
-        if (url === readerUrl(articleUrl)) {
-          return Promise.resolve(createResponseText(`Title: サンスポ最新公開記事\nPublished Time: ${new Date().toISOString()}`));
-        }
-        if (url === sitemapRoutes[successRoute]) {
-          return Promise.resolve(createResponseText(successRoute === 3 ? `Title: Sitemap\n${articleUrl}` : sitemap));
-        }
-        // 通信成功だけを採用しないことを確認するため、先頭CORSは常に200の候補なし本文を返す。
-        if (url === firstProxy) return Promise.resolve(createResponseText("<error>service unavailable</error>"));
+        if (emptyResponse) return Promise.resolve(createResponseText("## 中央競馬ニュース\n## レース情報"));
         return Promise.reject(new Error("source unavailable"));
       }
     });
     await harness.portal.refresh();
-    assert.deepEqual(requestedUrls.filter((url) => sitemapRoutes.includes(url)),
-      successRoute < 0 ? sitemapRoutes : sitemapRoutes.slice(0, successRoute + 1));
+    assert.deepEqual(requestedUrls, [readerUrl]);
     assert.equal(harness.portal.getSnapshot().itemCount, 1);
-    assert.equal(harness.portal.getSnapshot().errorCount, successRoute < 0 ? 1 : 0);
-    assert.match(harness.elements.get("#newsList").innerHTML, successRoute < 0 ? /前回サンスポ記事/ : /サンスポ最新公開記事/);
-    if (successRoute < 0) {
-      assert.equal(harness.portal.getSnapshot().lastUpdatedAt, lastUpdatedAt);
-      assert.ok(!requestedUrls.includes(readerUrl(articleUrl)), "有効なSitemap候補がなければ詳細取得へ進まない");
-    }
+    assert.equal(harness.portal.getSnapshot().errorCount, 1);
+    assert.match(harness.elements.get("#newsList").innerHTML, /前回サンスポ記事/);
+    assert.equal(harness.portal.getSnapshot().lastUpdatedAt, lastUpdatedAt);
+    assert.match(harness.elements.get("#errorList").innerHTML,
+      emptyResponse ? /ヘッドラインを抽出できませんでした/ : /source unavailable/);
   }
 }
 
@@ -468,8 +407,8 @@ async function run() {
   await testIncrementalRenderingAndSuccessfulReplacement();
   await testAllFailuresPreserveCacheTimestamp();
   testInvalidCachedTimestampIsIgnored();
-  await testSanspoFiltersMemberPagesBeforeHydrationLimit();
-  await testSanspoSitemapRoutesRequirePublicArticles();
+  await testSanspoUsesPublicNewsReaderListing();
+  await testSanspoReaderFailureOrEmptyKeepsCache();
   await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards();
   await testTospoUsesOfficialSitemapTextFallbackWithoutReaderCards("[article](https://tospo-keiba.jp/breaking_news/75702)");
   await testTospoHeadlinePreservesKeibaPrefix();
