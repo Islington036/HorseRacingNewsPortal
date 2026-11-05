@@ -557,6 +557,28 @@
       /^looking-ahead(?:-|$)/i.test(value);
   }
 
+  // DRF一覧の写真と直後の記事見出しを結び付け、旧CDNと現在の公式画像経路を同じ条件で扱う。
+  function extractDrfReaderCards(text) {
+    const items = [];
+    let pendingImage = "";
+
+    for (const line of String(text || "").split(/\r?\n/).map((value) => value.trim())) {
+      if (line.includes("![")) {
+        // 画像変換URL中の括弧を失わないよう末尾まで読む。広告・別ホストの画像は候補を消す。
+        const image = line.match(/^!\[[^\]]*\]\((https?:\/\/(?:a-us\.storyblok\.com\/|www\.drf\.com\/sb\/image\/assets\/).+)\)$/i);
+        pendingImage = image ? image[1] : "";
+        continue;
+      }
+
+      const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.drf\.com\/news\/(?!all-news(?:[?#/)]|$))[^)]+)\)$/i);
+      if (heading && pendingImage) items.push({ title: cleanWhitespace(heading[1]), url: heading[2], thumbnail: pendingImage });
+      // 空行以外はカード境界とし、広告・区切り・写真のない次記事へ前の画像を持ち越さない。
+      if (line) pendingImage = "";
+    }
+
+    return items;
+  }
+
   // Mirrorの一覧日時は相対表記・別カテゴリの混在があるため、同じ正式記事の公開メタデータだけを採用する。
   async function readMirrorArticleItems(doc, site, readDetailDocument, mapWithConcurrency, daysBack) {
     const cards = new Map();
@@ -607,6 +629,7 @@
   }
 
   return Object.freeze({
+    extractDrfReaderCards,
     extractIrishRacingReaderItems,
     extractRacenetReaderCards,
     extractRacingTvReaderCards,

@@ -11,6 +11,7 @@
     parseRss2JsonItems
   } = window.HorseRacingPortalCore;
   const {
+    extractDrfReaderCards,
     extractRacenetReaderCards,
     extractIrishRacingReaderItems,
     extractRacingTvReaderCards,
@@ -514,14 +515,17 @@
         }
         rawItems = await hydrateReaderDetailItems(rawItems, site);
       }
-      return dedupeByUrl(
+      const normalizedItems = dedupeByUrl(
         rawItems
           // 各抽出器が返すバラバラの形式を、sourceId/region/thumbnail付きの共通形式へ変換する。
           .map((item, index) => normalizeItem(item, site, index))
           // 日付がDateとして確定しない記事は、3日以内判定ができないためここで落とす。
           .filter(Boolean)
           .filter((item) => item.title && item.url && item.publishedAt instanceof Date && !Number.isNaN(item.publishedAt.getTime()))
-      ).slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+      );
+      // DRFのSitemap掲載順は公開日時順とは限らないため、新着を選んでから表示上限を適用する。
+      if (site.id === "drf") normalizedItems.sort((left, right) => right.publishedAt - left.publishedAt);
+      return normalizedItems.slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
     }
 
     // 構造化経路の記事へ、一覧Readerに存在する同一URLカードの不足項目を装飾する。
@@ -566,7 +570,8 @@
         return extractIrishRacingMarkdownItems(text, site).filter((item) => isAllowedDecorationImage(item.thumbnail, site));
       }
       if (site.readerDecorationParser === "drf") {
-        return extractDrfReaderDecorationItems(text, site);
+        return extractDrfReaderCards(text).filter((item) =>
+          isCandidateArticleUrl(item.url, site) && isAllowedDecorationImage(item.thumbnail, site));
       }
 
       const items = [];
@@ -576,31 +581,6 @@
         if (!isCandidateArticleUrl(url, site) || !isAllowedDecorationImage(thumbnail, site)) continue;
         items.push({ url, thumbnail });
       }
-      return items;
-    }
-
-    // DRFのReader一覧は写真と見出しが別行なので、直前のStoryblok写真を次の記事URLへ結び付ける。
-    // 記事詳細のOG画像は共通ロゴになる場合があるため、一覧で確認できた写真以外は補完しない。
-    function extractDrfReaderDecorationItems(text, site) {
-      const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
-      const items = [];
-      let pendingImage = "";
-
-      lines.forEach((line) => {
-        const image = line.match(/^!\[[^\]]*\]\((https?:\/\/a-us\.storyblok\.com\/.+)\)$/i);
-        if (image) {
-          pendingImage = image[1];
-          return;
-        }
-
-        const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.drf\.com\/news\/(?!all-news(?:[?#/]|$))[^)]+)\)$/i);
-        if (!heading) return;
-        if (pendingImage && isAllowedDecorationImage(pendingImage, site)) {
-          items.push({ title: heading[1], url: heading[2], thumbnail: pendingImage });
-        }
-        pendingImage = "";
-      });
-
       return items;
     }
 

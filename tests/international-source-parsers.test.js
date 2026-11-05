@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const {
+  extractDrfReaderCards,
   extractIrishRacingReaderItems,
   extractRacenetReaderCards,
   extractRacingTvReaderCards,
@@ -20,6 +21,7 @@ const {
 } = require("../international/source-parsers.js");
 
 async function run() {
+  testDrfReaderCards();
   testRacenetReaderCards();
   testRacenetLongTitleFallback();
   testRacenetFixedPages();
@@ -31,7 +33,29 @@ async function run() {
   testIrishRacingDateTime();
   testIrishRacingReaderItems();
   testAllowedWordPressPosts();
-  console.log("international-source-parsers: 11 tests passed");
+  console.log("international-source-parsers: 12 tests passed");
+}
+
+// 括弧付きの旧・新画像URLを保ち、写真なしカードや広告・カテゴリ境界へ画像を持ち越さない。
+function testDrfReaderCards() {
+  const oldImage = "https://a-us.storyblok.com/f/123/photo.jpg/m/384x0/filters:format(webp):quality(75)";
+  const newImage = "https://www.drf.com/sb/image/assets/123/photo.jpg/m/384x0/filters:format(webp):quality(75)";
+  const heading = (slug) => `#### [${slug}](https://www.drf.com/news/${slug})`;
+  const image = (url) => `![Photo](${url})`;
+  const text = [
+    image(oldImage), heading("old-news"), heading("no-image"),
+    image(newImage), heading("current-news"),
+    image(newImage), image("https://ads.example/ad.jpg"), heading("after-ad"),
+    image(newImage), "## Offers", heading("after-section"),
+    image(newImage), "---", heading("after-divider"),
+    image(newImage), "[Advertisement](/offers)", heading("after-relative-ad"),
+    image(newImage), heading("all-news"), heading("after-category"),
+    image(newImage.replace("www.drf.com", "unrelated.example")), heading("wrong-host")
+  ].join("\n");
+  assert.deepEqual(extractDrfReaderCards(text), [
+    { title: "old-news", url: "https://www.drf.com/news/old-news", thumbnail: oldImage },
+    { title: "current-news", url: "https://www.drf.com/news/current-news", thumbnail: newImage }
+  ]);
 }
 
 // 通常カードとpremium鍵付きカードの両方で、最初の実写真と個別記事URLを維持する。

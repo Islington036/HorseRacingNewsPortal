@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseMirrorListing, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261106-theage-dates-6";
+import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseMirrorListing, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261106-news-sources";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -241,9 +241,11 @@ export const SOURCES = [
       "https://www.drf.com/news/all-news?page=2"
     ],
     parseReaderDecoration: parseDrfReaderCards,
-    decorationImagePattern: /a-us\.storyblok\.com/i,
-    decorationImageOrigins: ["https://a-us.storyblok.com"],
+    // 本体と同じパーサーで画像パスを検証し、旧CDN・公式画像のorigin制限も合わせる。
+    decorationImageOrigins: ["https://a-us.storyblok.com", "https://www.drf.com"],
     hydrationTimeoutMs: 20000,
+    maxItems: internationalConfig.MAX_ITEMS_PER_SITE,
+    requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.25

@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20261106-theage-dates-6";
-import { SOURCES } from "./sources.js?v=20261106-theage-dates-6";
+import { runSourceTest } from "./core.js?v=20261106-news-sources";
+import { SOURCES } from "./sources.js?v=20261106-news-sources";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
