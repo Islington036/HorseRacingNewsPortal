@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261016-ttr-edition-metadata";
+import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseMirrorListing, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261106-mirror-coverage";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -56,7 +56,7 @@ export const SOURCES = [
     id: "theage_racing_reader",
     name: `${theAgeSite.name} Reader Listing`,
     parse: parseTheAgeReader,
-    // 本体と同じく公開CORS経路の後にReaderへフォールバックし、最終的な成功経路も表示する。
+    // 本体と同じくReaderを優先し、失敗時は公開CORS経路を試す。最終的な成功経路も表示する。
     allowTextProxy: theAgeSite.allowTextProxy !== false,
     timeoutMs: theAgeSite.requestTimeoutMs,
     requiredRoute: "text-proxy",
@@ -400,6 +400,20 @@ export const SOURCES = [
     // 配信元のdummy画像は本体でダミー表示へ置換されるため、実写真の最低比率だけを要求する。
     minimumImageCoverage: 0.5,
     forbiddenUrlPatterns: [/\/news\/?$/i]
+  },
+  {
+    ...mirrorRacingSite,
+    id: "mirror_racing_listing",
+    name: `${mirrorRacingSite.name} 公式一覧・記事日時`,
+    parse: parseMirrorListing,
+    tryDirect: true,
+    directOnly: true,
+    requiredRoute: "direct",
+    pathPrefixes: ["/sport/horse-racing/"],
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0
   },
   {
     id: "mirror_racing_rss_api",

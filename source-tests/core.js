@@ -21,6 +21,7 @@ const {
   isTtrAusNzFixedPage,
   parseInternationalDate,
   parseTtrEditionDate,
+  readMirrorArticleItems,
   readZonedParts: timeZoneParts,
   zonedDateToUtc
 } = window.InternationalHorseRacingSourceParsers;
@@ -140,7 +141,7 @@ async function fetchAndParseSource(source) {
   if (source.allowTextProxy && source.preferTextProxy) {
     candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
-  if (!source.textProxyOnly) {
+  if (!source.textProxyOnly && !source.directOnly) {
     // Reader専用媒体では、既知の失敗経路を順番に待ってテスト結果が遅くならないよう公開CORSプロキシを除外する。
     PROXY_BUILDERS.forEach((buildUrl, index) => {
       candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
@@ -311,6 +312,13 @@ export function parseTheAgeReader(text, source) {
   return extractTheAgeReaderItems(text)
     .map((item) => ({ ...item, publishedAt: parseInternationalDate(item.publishedAt) }))
     .filter((item) => item.publishedAt && isCandidateArticleUrl(item.url, source));
+}
+
+// Mirrorの公式一覧・詳細の両方を本体と同じ抽出器で検証し、RSS変換の成否から切り離す。
+export async function parseMirrorListing(text, source) {
+  const parseHtml = (html) => new DOMParser().parseFromString(html, "text/html");
+  return readMirrorArticleItems(parseHtml(text), source, async (url) =>
+    parseHtml(await fetchText(url, { timeoutMs: source.timeoutMs })), mapWithConcurrency, portalConfig.DAYS_BACK);
 }
 
 // HTTPS対応済み媒体が古いRSS内だけhttpリンクを返す場合、同一記事の重複と混在コンテンツを防ぐ。

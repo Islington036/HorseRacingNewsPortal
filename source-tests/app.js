@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20261016-ttr-edition-metadata";
-import { SOURCES } from "./sources.js?v=20261106-tospo-thumbnail-path";
+import { runSourceTest } from "./core.js?v=20261106-mirror-coverage";
+import { SOURCES } from "./sources.js?v=20261106-mirror-coverage";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),

@@ -23,8 +23,78 @@ async function run() {
   await testSourceMetadataCacheMigration(harness);
   await testDailyMailMotorSportExclusion(harness);
   await testScmpRequiresStructuredDates();
+  await testMirrorOfficialFallback();
 
-  console.log("international-app: 12 tests passed");
+  console.log("international-app: 13 tests passed");
+}
+
+// 古い変換結果だけなら公式カードを照合し、新しいRSSがあるときは不要な詳細取得をしない。
+async function testMirrorOfficialFallback() {
+  const { api, context } = loadAppHarness();
+  const site = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES.find((entry) => entry.id === "mirror_racing");
+  const url = site.url + "value-scope-horse-who-can-37839503";
+  let canonical = url;
+  let detailDate = "2026-11-03T16:31:37Z";
+  const attr = (value) => ({ getAttribute: () => value });
+  const card = (href) => ({
+    getAttribute: () => href.match(/-(\d+)$/)?.[1],
+    querySelector: (selector) => selector === "img" ? null : { ...attr(href), textContent: "Value Scope: fresh headline" }
+  });
+  const cards = [card(site.url), card(url), card(url)];
+  context.DOMParser = class extends FakeDOMParser {
+    parseFromString(text, type) {
+      if (text === "Mirror listing") return { querySelectorAll: () => cards };
+      if (text === "Mirror detail") return { querySelector: (selector) =>
+        selector.includes("canonical") ? attr(canonical) :
+        selector.includes("published_time") ? attr(detailDate) : selector === "h1"
+          ? { textContent: "Full detail headline" } : attr("https://i2-prod.mirror.co.uk/photo.jpg") };
+      return super.parseFromString(text, type);
+    }
+  };
+  const requests = [];
+  let rssDate = "2020-10-19 00:59:00";
+  context.fetch = async (requested) => {
+    requests.push(requested);
+    if (requested === site.apiUrl) return createTextResponse(JSON.stringify({ status: "ok", items: [{
+      title: "RSS headline", link: url, pubDate: rssDate
+    }] }));
+    if (requested === site.url) return createTextResponse("Mirror listing");
+    if (requested === url) return createTextResponse("Mirror detail");
+    throw new Error("Unexpected request");
+  };
+  const items = await api.fetchSite(site);
+  assert.deepEqual(requests, [site.apiUrl, site.url, url]);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].url, url);
+  assert.equal(items[0].title, "Full detail headline");
+  assert.equal(items[0].publishedAt.toISOString(), "2026-11-03T16:31:37.000Z");
+  assert.equal(items[0].thumbnail, "https://i2-prod.mirror.co.uk/photo.jpg");
+
+  // エラーページ・別記事への転送では日時を採用せず、古いRSSやReaderへ戻らない。
+  canonical = site.url;
+  await assert.rejects(api.fetchSite(site), /記事URL・公開日時/);
+  // 追加候補は取得せず、確認分がすべて期間外なら正常0扱いを避ける。全件確認済みなら古い日付を返せる。
+  canonical = url;
+  site.detailHydrationLimit = 1;
+  cards.push(card(site.url + "another-story-37839504"));
+  detailDate = "2020-11-03T16:31:37Z";
+  requests.length = 0;
+  await assert.rejects(api.fetchSite(site), /確認上限/);
+  assert.deepEqual(requests, [site.apiUrl, site.url, url]);
+  detailDate = new Date().toISOString();
+  assert.equal((await api.fetchSite(site)).length, 1);
+  cards.pop();
+  detailDate = "2020-11-03T16:31:37Z";
+  assert.equal((await api.fetchSite(site))[0].publishedAt.toISOString(), "2020-11-03T16:31:37.000Z");
+  api.state.siteLatest[site.id] = detailDate;
+  api.state.errors = [{ site: site.name, message: "確認上限" }];
+  api.renderErrors();
+  assert.match(context.document.querySelector("#errorList").innerHTML, /確認上限/);
+  assert.doesNotMatch(context.document.querySelector("#errorList").innerHTML, /期間内|3日以内の記事がありません/);
+  requests.length = 0;
+  rssDate = new Date().toISOString().slice(0, 19).replace("T", " ");
+  assert.equal((await api.fetchSite(site))[0].title, "RSS headline");
+  assert.deepEqual(requests, [site.apiUrl]);
 }
 
 // 日時のないコラムへ隣の記事画像の日付を結び付けるReader後退を禁止し、誤った旧キャッシュだけを除く。
@@ -637,6 +707,7 @@ function loadAppHarness() {
       isCandidateArticleUrl,
       normalizeItem,
       renderCard,
+      renderErrors,
       loadCache,
       saveCache,
       state

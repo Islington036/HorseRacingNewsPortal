@@ -110,7 +110,8 @@
           excludePathHints: ["/nascar-driver-", "-nascar-driver-"],
           preferTextProxy: true, tryDirect: true, allowEmptyStructured: true, cacheVersion: 1
         },
-        { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", apiUrl: MIRROR_RACING_RSS_API, baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], preferTextProxy: true, tryDirect: true, rss2Json: true, exclusiveStructuredJson: true },
+        // 新着を含むRSS変換を優先し、不通・古い応答のときだけ公式記事の公開日時を少数・低並列で確認する。
+        { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", apiUrl: MIRROR_RACING_RSS_API, baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], tryDirect: true, rss2Json: true, exclusiveStructuredJson: true, detailHydrationLimit: 6, detailHydrationConcurrency: 2, cacheVersion: 1 },
         // Sporting Life自身のWeb画面が利用する公開JSON APIを直接読む。
         // CORS許可済みの構造化データなので、Cookie同意画面や公開プロキシの遅延を避けられる。
         { id: "sportinglife_features", name: "Sporting Life Racing", region: "europe", url: "https://www.sportinglife.com/racing/features", apiUrl: "https://www.sportinglife.com/api/content/articles/summary?limit=13&offset=0&basketPath=sl%2Fracing", baseUrl: "https://www.sportinglife.com", parser: "generic", pathHints: ["/racing/news/", "/racing/features/"], tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true },

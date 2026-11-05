@@ -508,6 +508,55 @@
       /^looking-ahead(?:-|$)/i.test(value);
   }
 
+  // Mirrorの一覧日時は相対表記・別カテゴリの混在があるため、同じ正式記事の公開メタデータだけを採用する。
+  async function readMirrorArticleItems(doc, site, readDetailDocument, mapWithConcurrency, daysBack) {
+    const cards = new Map();
+    let hasUncheckedCards = false;
+    for (const card of doc.querySelectorAll("article[data-tmdatatrack-articleid]")) {
+      const link = card.querySelector('[data-testid="teaser-heading"] a[href]');
+      const title = cleanWhitespace(link && link.textContent);
+      if (!title) continue;
+      let url;
+      try {
+        url = new URL(link.getAttribute("href"), site.url);
+      } catch (_error) {
+        continue;
+      }
+      const match = url.pathname.match(/^\/sport\/horse-racing\/[^/]+-(\d+)$/);
+      if (url.origin !== site.baseUrl || !match || match[1] !== card.getAttribute("data-tmdatatrack-articleid")) continue;
+      // トラッキングクエリではなく公式記事のorigin+pathnameで候補を重複排除する。
+      const articleUrl = url.origin + url.pathname;
+      if (cards.has(articleUrl)) continue;
+      if (cards.size >= site.detailHydrationLimit) {
+        hasUncheckedCards = true;
+        break;
+      }
+      cards.set(articleUrl, { title, url: articleUrl, thumbnail: card.querySelector("img")?.getAttribute("src") || "" });
+    }
+    if (!cards.size) throw new Error("Mirrorの競馬記事カードを抽出できませんでした");
+
+    const items = await mapWithConcurrency([...cards.values()], site.detailHydrationConcurrency, async (card) => {
+      const detail = await readDetailDocument(card.url);
+      const canonical = detail.querySelector('link[rel="canonical"]')?.getAttribute("href");
+      const date = detail.querySelector('meta[property="article:published_time"]')?.getAttribute("content") || "";
+      const publishedAt = parseInternationalDate(date);
+      // 別記事への転送や日時欠落を「期間内の記事なし」とせず、失敗時はポータルの前回キャッシュを保つ。
+      if (canonical !== card.url || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(date) || !publishedAt) {
+        throw new Error("Mirrorの記事URL・公開日時を確認できませんでした");
+      }
+      // 同じ記事を確認できたら、短縮されることがある一覧見出しより記事自身の見出しを優先する。
+      const title = cleanWhitespace(detail.querySelector("h1")?.textContent) || card.title;
+      return { ...card, title, publishedAt, thumbnail: detail.querySelector('meta[property="og:image"]')?.getAttribute("content") || card.thumbnail };
+    });
+    // 一覧順は公開日時順とは限らない。未確認カードが残るときは、期間内0件と断定しない。
+    const now = Date.now();
+    const start = now - daysBack * 86400000;
+    if (hasUncheckedCards && !items.some((item) => item.publishedAt >= start && item.publishedAt <= now + 12 * 3600000)) {
+      throw new Error("Mirrorの記事詳細の確認上限に達し、期間内の記事の有無を確定できませんでした");
+    }
+    return items.sort((left, right) => right.publishedAt - left.publishedAt);
+  }
+
   return Object.freeze({
     extractIrishRacingReaderItems,
     extractRacenetReaderCards,
@@ -525,6 +574,7 @@
     parseTtrEditionDate,
     pickRacenetReaderTitle,
     readZonedParts,
+    readMirrorArticleItems,
     zonedDateToUtc
   });
 });
