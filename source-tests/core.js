@@ -15,6 +15,7 @@ const {
   extractIrishRacingReaderItems,
   extractRacingTvReaderCards,
   extractTheAgeReaderItems,
+  extractTheAgeFeedItems,
   extractTtrTitleMatchingSlug,
   isCandidateArticleUrl,
   isAllowedWordPressPost,
@@ -22,6 +23,7 @@ const {
   parseInternationalDate,
   parseTtrEditionDate,
   readMirrorArticleItems,
+  readTheAgeArticleItems,
   readZonedParts: timeZoneParts,
   zonedDateToUtc
 } = window.InternationalHorseRacingSourceParsers;
@@ -134,6 +136,15 @@ function matchesForbiddenUrl(url, patterns) {
 
 // CORS対応媒体は直接取得を先に試し、通信またはパース失敗時だけ本体と同じ公開プロキシへ進む。
 async function fetchAndParseSource(source) {
+  if (source.id === "theage_racing_reader") {
+    // 本体と同じ2経路を共有処理で照合し、RSSだけ・Readerだけの成功も正しく検証する。
+    const result = await readTheAgeArticleItems(
+      async () => extractTheAgeFeedItems(new DOMParser().parseFromString(
+        await fetchText(source.feedUrl, { timeoutMs: source.timeoutMs }), "application/xml"), source),
+      async () => parseTheAgeReader(await fetchText(buildTextProxyUrl(source.url, source), { timeoutMs: source.timeoutMs }), source), portalConfig.DAYS_BACK
+    );
+    return { parsedItems: result.items, route: result.route };
+  }
   const candidates = [];
   if (source.tryDirect) {
     candidates.push({ url: source.url, route: "direct" });
@@ -948,7 +959,7 @@ function normalizeItem(item, source) {
   const thumbnail = absoluteUrl(item.thumbnail, source.baseUrl || source.url);
   const publishedAt = item.publishedAt ? new Date(item.publishedAt) : null;
 
-  return { title, url, thumbnail, publishedAt, ...(item.editionDate ? { editionDate: item.editionDate } : {}) };
+  return { title, url, thumbnail, publishedAt, ...(item.editionDate ? { editionDate: item.editionDate } : {}), ...(item.publicationDate ? { publicationDate: item.publicationDate } : {}) };
 }
 
 // ブラウザが実際に表示できる画像かを確認し、遅い画像はテスト全体を止めず失敗扱いにする。

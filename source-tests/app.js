@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20261106-mirror-coverage";
-import { SOURCES } from "./sources.js?v=20261106-mirror-coverage";
+import { runSourceTest } from "./core.js?v=20261106-theage-dates-6";
+import { SOURCES } from "./sources.js?v=20261106-theage-dates-6";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),
@@ -121,7 +121,8 @@ function renderItems(items) {
     link.textContent = item.title;
     const detail = document.createElement("p");
     // エディション暦日しか配信されないTTRは、内部の並べ替え時刻を正確な公開時刻として表示しない。
-    const dateText = item.editionDate ? `${item.editionDate}（エディション日付・公開時刻未配信）` : formatDate(item.publishedAt);
+    const dateText = item.editionDate ? `${item.editionDate}（エディション日付・公開時刻未配信）`
+      : item.publicationDate ? `${item.publicationDate}（公開時刻未配信）` : formatDate(item.publishedAt);
     detail.textContent = `${dateText} / ${item.thumbnail ? `画像 ${item.imageLoaded ? "OK" : "NG"}` : "本体ではダミー画像"}`;
     body.append(link, detail);
     card.append(thumbnail, body);
