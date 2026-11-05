@@ -1361,7 +1361,7 @@
         : "";
       const messages = [
         ...state.errors.map((error) => ({ type: "error", site: error.site, message: error.message })),
-        ...buildWindowNotes(),
+        ...buildWindowNotes(failedNames),
         ...buildImageNotes()
       ];
 
@@ -1380,11 +1380,12 @@
         .join("");
     }
 
-    function buildWindowNotes() {
+    function buildWindowNotes(failedNames) {
       const visibleBySite = new Set(getDateScopedItems().map((item) => item.sourceId));
 
       return CONFIG.SITES.map((site) => {
-        if (visibleBySite.has(site.id)) return null;
+        // 取得失敗時の前回検出日は、今回の「期間内の記事なし」の根拠にはならない。
+        if (failedNames.includes(site.name) || visibleBySite.has(site.id)) return null;
         const latestIso = state.siteLatest[site.id];
         if (!latestIso) return null;
 

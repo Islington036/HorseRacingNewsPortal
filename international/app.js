@@ -24,6 +24,7 @@
     parseIrishRacingDateTime,
     parseTtrEditionDate,
     pickRacenetReaderTitle,
+    readMirrorArticleItems,
     readZonedParts: timeZoneParts,
     zonedDateToUtc
   } = window.InternationalHorseRacingSourceParsers;
@@ -363,7 +364,9 @@
           readerDecorationUrls: sourceUrl === site.sitemapUrl ? site.readerDecorationUrls || [] : []
         };
 
-        for (const proxyUrl of buildProxyUrls(sourceUrl, requestSite)) {
+        // Mirrorの一覧と記事詳細は公式CORS経路で照合し、Readerの相対日時や別サイトのHTMLを代用しない。
+        const mirrorListing = site.id === "mirror_racing" && sourceUrl === site.url;
+        for (const proxyUrl of mirrorListing ? [sourceUrl] : buildProxyUrls(sourceUrl, requestSite)) {
           try {
             // directFetch用のURLだけはサイト設定の追加ヘッダーを付ける。公開プロキシには余計なヘッダーを渡さない。
             // 現在はRacing.comの公開APIヘッダーが対象で、今後ほかの媒体が追加されても同じ境界を維持する。
@@ -375,6 +378,8 @@
             const items = await parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
+              // 変換APIが古い記事だけを返した場合も、期間内0件を確定する前に公式一覧を確認する。
+              if (site.id === "mirror_racing" && sourceUrl === site.apiUrl && !items.some(isWithinWindow)) break;
               if (site.mergeStructuredSources && sourceUrl !== site.url) {
                 // rss2jsonは無料経路で先頭の一部だけを返すため、API成功後も完全RSSまで一度だけ進む。
                 // 同じURLを別プロキシで再取得せず、次のsourceUrlへ移るため内側ループを終了する。
@@ -462,7 +467,10 @@
         throw new Error("RSSレスポンスをXMLとして解析できませんでした");
       }
       const parser = PARSERS[site.parser] || PARSERS.generic;
-      let rawItems = parser(doc, site, responseText, json);
+      let rawItems = site.id === "mirror_racing" && site.expectedResponseType === "html"
+        ? await readMirrorArticleItems(doc, site, async (url) =>
+          new DOMParser().parseFromString(await fetchProxyText(url, {}, site.requestTimeoutMs), "text/html"), mapWithConcurrency, state.activeDaysBack)
+        : parser(doc, site, responseText, json);
       if (site.readerDecorationUrls && site.readerDecorationUrls.length > 0) {
         // Sitemapのタイトル・日時・URLは維持し、一覧カードと完全URL一致した画像だけを補う。
         // タイトル一致は同名記事や省略見出しの誤結合を起こすため使用しない。
@@ -2807,7 +2815,7 @@
         : "";
       const messages = [
         ...state.errors.map((error) => ({ type: "error", site: error.site, message: error.message })),
-        ...buildWindowNotes(),
+        ...buildWindowNotes(failedNames),
         ...buildImageNotes()
       ];
 
@@ -2828,11 +2836,12 @@
     }
 
     // 取得はできたが現在の表示日数内に記事が無い媒体を、媒体ごとの最新検出日から説明する。
-    function buildWindowNotes() {
+    function buildWindowNotes(failedNames) {
       const visibleBySite = new Set(getDateScopedItems().map((item) => item.sourceId));
 
       return CONFIG.SITES.map((site) => {
-        if (visibleBySite.has(site.id)) return null;
+        // 取得失敗時の前回検出日は、今回の「期間内の記事なし」の根拠にはならない。
+        if (failedNames.includes(site.name) || visibleBySite.has(site.id)) return null;
         const latestIso = state.siteLatest[site.id];
         if (!latestIso) return null;
 
