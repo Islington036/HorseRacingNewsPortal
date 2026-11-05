@@ -1,5 +1,5 @@
-import { runSourceTest } from "./core.js?v=20261106-mirror-coverage";
-import { SOURCES } from "./sources.js?v=20261106-mirror-coverage";
+import { runSourceTest } from "./core.js?v=20261106-drf-chronology";
+import { SOURCES } from "./sources.js?v=20261106-drf-chronology";
 
 const elements = {
   sourceSelect: document.querySelector("#sourceSelect"),

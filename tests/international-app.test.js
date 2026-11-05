@@ -24,8 +24,65 @@ async function run() {
   await testDailyMailMotorSportExclusion(harness);
   await testScmpRequiresStructuredDates();
   await testMirrorOfficialFallback();
+  await testDrfNewestItemsBeforeLimit();
 
-  console.log("international-app: 13 tests passed");
+  console.log("international-app: 14 tests passed");
+}
+
+// Sitemapが古い順でも、本体とテスターは新着18件を選び、降順判定を合否へ含める。
+async function testDrfNewestItemsBeforeLimit() {
+  const { api, context } = loadAppHarness();
+  const config = context.window.InternationalHorseRacingPortalDefinition.CONFIG;
+  const site = { ...config.SITES.find((entry) => entry.id === "drf"), readerDecorationUrls: [] };
+  const now = Date.now();
+  const records = Array.from({ length: 20 }, (_, index) => ({
+    url: `https://www.drf.com/news/drf-news-${index}`,
+    title: `DRF news ${index}`,
+    date: new Date(now - (19 - index) * 60000).toISOString()
+  }));
+  context.DOMParser = class extends FakeDOMParser {
+    parseFromString(text, type) {
+      if (type !== "application/xml") return super.parseFromString(text, type);
+      return {
+        ...super.parseFromString(text, type),
+        getElementsByTagNameNS(_namespace, name) {
+          if (name !== "url") return [];
+          return records.map((record) => ({
+            getElementsByTagNameNS(_childNamespace, childName) {
+              if (childName === "loc") return [{ textContent: record.url }];
+              if (childName !== "news") return [];
+              return [{ getElementsByTagNameNS(_newsNamespace, field) {
+                return [{ textContent: field === "title" ? record.title : record.date }];
+              } }];
+            }
+          }));
+        }
+      };
+    }
+  };
+  context.fetch = async () => createTextResponse('<?xml version="1.0"?><urlset></urlset>');
+  const items = await api.fetchSite(site);
+  assert.equal(items.length, config.MAX_ITEMS_PER_SITE);
+  assert.equal(items[0].url, records[19].url);
+  assert.equal(items[17].url, records[2].url);
+
+  vm.runInContext(fs.readFileSync(require.resolve("../japanese/config.js"), "utf8"), context);
+  context.window.JapaneseHorseRacingSourceParsers = {};
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/core.js"), "utf8").replace(/^export /gm, ""), context);
+  vm.runInContext(fs.readFileSync(require.resolve("../source-tests/sources.js"), "utf8")
+    .replace(/^import .*\n/, "").replace(/^export /gm, "") +
+    '\nwindow.__DrfSource = SOURCES.find((entry) => entry.id === "drf_news_sitemap");\nwindow.__RunSourceTest = runSourceTest;', context);
+  const testSource = context.window.__DrfSource;
+  assert.equal(testSource.maxItems, config.MAX_ITEMS_PER_SITE);
+  assert.equal(testSource.requireDescendingDates, true);
+  const report = await context.window.__RunSourceTest({ ...testSource, readerDecorationUrls: [], minimumImageCoverage: 0 });
+  assert.deepEqual(Array.from(report.items, (item) => item.url), Array.from(items, (item) => item.url));
+  assert.equal(report.passed, true);
+  const unsorted = await context.window.__RunSourceTest({
+    ...testSource, id: "drf_order_regression", readerDecorationUrls: [], minimumImageCoverage: 0
+  });
+  assert.equal(unsorted.chronologicalOrderValid, false);
+  assert.equal(unsorted.passed, false);
 }
 
 // 古い変換結果だけなら公式カードを照合し、新しいRSSがあるときは不要な詳細取得をしない。
