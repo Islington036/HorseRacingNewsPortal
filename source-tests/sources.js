@@ -297,7 +297,7 @@ export const SOURCES = [
     textProxyOnly: true,
     readerDecorationUrls: tospoSite.readerListingUrls,
     parseReaderDecoration: parseTospoReaderCards,
-    decorationImagePattern: /\/images\/article\/thumbnail\//i,
+    // 画像パスの検証は本体と共通の専用パーサーへ集約し、配信元ホストの制限は維持する。
     decorationImageOrigins: ["https://tospo-keiba.jp"],
     readerCacheBust: true,
     // 東スポのサイトマップは通常20件弱なので、既定8件で打ち切らず2ページ目の記事まで結合を検証する。

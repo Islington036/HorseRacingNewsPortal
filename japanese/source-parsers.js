@@ -71,7 +71,8 @@
     lines.forEach((line, index) => {
       const card = line.match(/\[!\[[^\]]*\]\((https?:\/\/[^)]+)\)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)(?:!\[[^\]]*\]\([^)]+\))?\s*\[([^\]]+)\]\((https?:\/\/tospo-keiba\.jp\/breaking_news\/\d+)\)/i);
       if (!card || canonicalArticleUrl(card[2]) !== canonicalArticleUrl(card[4])) return;
-      if (!/\/images\/article\/thumbnail\//i.test(card[1])) return;
+      // 配信元の旧画像パスと、幅指定付きの現行WebPパスだけを記事写真として認める。
+      if (!/^https:\/\/tospo-keiba\.jp\/images\/article\/(?:thumbnail\/|thumbnail_v1\/w320\/)/i.test(card[1])) return;
 
       const nextCardOffset = lines
         .slice(index + 1)
