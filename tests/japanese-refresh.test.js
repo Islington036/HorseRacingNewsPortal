@@ -225,7 +225,7 @@ function testInvalidCachedTimestampIsIgnored() {
 async function testSourceDetailsKeepFailuresVisible() {
   const harness = createHarness({
     lastUpdatedAt: new Date().toISOString(),
-    siteLatest: {},
+    siteLatest: { beta: "2020-10-19T00:59:00Z" },
     allItems: [cachedItem("alpha", "Old Alpha")]
   }, {
     mobile: true,
@@ -236,11 +236,13 @@ async function testSourceDetailsKeepFailuresVisible() {
   assert.match(harness.elements.get("#siteSummary").innerHTML, /Beta <span>0<\/span>/);
   assert.match(harness.elements.get("#pausedSources").innerHTML, /スポーツ報知/);
   assert.equal(harness.elements.get("#errorSummary").hidden, true);
+  assert.match(harness.elements.get("#errorList").innerHTML, /3日以内の記事がありません/);
 
   await harness.portal.refresh();
   assert.equal(details.open, false);
   assert.equal(harness.elements.get("#errorSummary").hidden, false);
   assert.match(harness.elements.get("#errorSummary").textContent, /取得失敗 2媒体/);
+  assert.doesNotMatch(harness.elements.get("#errorList").innerHTML, /3日以内の記事がありません/);
   // 利用者が開いた状態は、その後の再描画で初期値へ戻さない。
   details.open = true;
   await harness.portal.refresh();

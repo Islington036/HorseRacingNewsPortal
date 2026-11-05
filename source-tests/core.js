@@ -12,15 +12,19 @@ const portalConfig = window.InternationalHorseRacingPortalDefinition
   ? window.InternationalHorseRacingPortalDefinition.CONFIG
   : {};
 const {
+  extractDrfReaderCards,
   extractIrishRacingReaderItems,
   extractRacingTvReaderCards,
   extractTheAgeReaderItems,
+  extractTheAgeFeedItems,
   extractTtrTitleMatchingSlug,
   isCandidateArticleUrl,
   isAllowedWordPressPost,
   isTtrAusNzFixedPage,
   parseInternationalDate,
   parseTtrEditionDate,
+  readMirrorArticleItems,
+  readTheAgeArticleItems,
   readZonedParts: timeZoneParts,
   zonedDateToUtc
 } = window.InternationalHorseRacingSourceParsers;
@@ -61,8 +65,8 @@ export async function runSourceTest(source) {
   const items = parsedItems
     .map((item) => normalizeItem(item, source))
     .filter(Boolean);
-  // 東スポSitemapは一覧から日時を補完した後に並べ替え、本体のカード表示と新着順を揃える。
-  if (source.sitemapTextFallbackUrl) {
+  // 東スポと混在順のDRF Sitemapは、上限を適用する前に本体と同じ新着順へ揃える。
+  if (source.sitemapTextFallbackUrl || source.id === "drf_news_sitemap") {
     items.sort((left, right) => right.publishedAt - left.publishedAt);
   }
 
@@ -133,6 +137,15 @@ function matchesForbiddenUrl(url, patterns) {
 
 // CORS対応媒体は直接取得を先に試し、通信またはパース失敗時だけ本体と同じ公開プロキシへ進む。
 async function fetchAndParseSource(source) {
+  if (source.id === "theage_racing_reader") {
+    // 本体と同じ2経路を共有処理で照合し、RSSだけ・Readerだけの成功も正しく検証する。
+    const result = await readTheAgeArticleItems(
+      async () => extractTheAgeFeedItems(new DOMParser().parseFromString(
+        await fetchText(source.feedUrl, { timeoutMs: source.timeoutMs }), "application/xml"), source),
+      async () => parseTheAgeReader(await fetchText(buildTextProxyUrl(source.url, source), { timeoutMs: source.timeoutMs }), source), portalConfig.DAYS_BACK
+    );
+    return { parsedItems: result.items, route: result.route };
+  }
   const candidates = [];
   if (source.tryDirect) {
     candidates.push({ url: source.url, route: "direct" });
@@ -140,7 +153,7 @@ async function fetchAndParseSource(source) {
   if (source.allowTextProxy && source.preferTextProxy) {
     candidates.push({ url: buildTextProxyUrl(source.url, source), route: "text-proxy" });
   }
-  if (!source.textProxyOnly) {
+  if (!source.textProxyOnly && !source.directOnly) {
     // Reader専用媒体では、既知の失敗経路を順番に待ってテスト結果が遅くならないよう公開CORSプロキシを除外する。
     PROXY_BUILDERS.forEach((buildUrl, index) => {
       candidates.push({ url: buildUrl(source.url), route: `proxy-${index + 1}` });
@@ -311,6 +324,13 @@ export function parseTheAgeReader(text, source) {
   return extractTheAgeReaderItems(text)
     .map((item) => ({ ...item, publishedAt: parseInternationalDate(item.publishedAt) }))
     .filter((item) => item.publishedAt && isCandidateArticleUrl(item.url, source));
+}
+
+// Mirrorの公式一覧・詳細の両方を本体と同じ抽出器で検証し、RSS変換の成否から切り離す。
+export async function parseMirrorListing(text, source) {
+  const parseHtml = (html) => new DOMParser().parseFromString(html, "text/html");
+  return readMirrorArticleItems(parseHtml(text), source, async (url) =>
+    parseHtml(await fetchText(url, { timeoutMs: source.timeoutMs })), mapWithConcurrency, portalConfig.DAYS_BACK);
 }
 
 // HTTPS対応済み媒体が古いRSS内だけhttpリンクを返す場合、同一記事の重複と混在コンテンツを防ぐ。
@@ -573,28 +593,9 @@ export function parseIrishRacingReaderCards(text) {
   });
 }
 
-// DRF一覧では画像と見出しリンクが別行に並ぶため、直前のStoryblok写真を次の記事見出しへ結び付ける。
-// 広告画像は記事見出しへ到達する前にリセットされ、/news/記事URL以外には採用しない。
+// DRFの旧・新画像経路とカード境界を、本体と同じ共有パーサーで検証する。
 export function parseDrfReaderCards(text) {
-  const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
-  const items = [];
-  let pendingImage = "";
-
-  lines.forEach((line) => {
-    // Storyblok変換URLには filters:format(webp) の括弧が入るため、行末の閉じ括弧までを貪欲に読む。
-    const image = line.match(/^!\[[^\]]*\]\((https?:\/\/a-us\.storyblok\.com\/.+)\)$/i);
-    if (image) {
-      pendingImage = image[1];
-      return;
-    }
-
-    const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.drf\.com\/news\/(?!all-news(?:[?#/]|$))[^)]+)\)$/i);
-    if (!heading) return;
-    if (pendingImage) items.push({ title: heading[1], url: heading[2], thumbnail: pendingImage });
-    pendingImage = "";
-  });
-
-  return items;
+  return extractDrfReaderCards(text);
 }
 
 // BloodHorse一覧Readerの各カードから、同一URLの写真・完全見出し・米東部の相対公開時刻を抽出する。
@@ -940,7 +941,7 @@ function normalizeItem(item, source) {
   const thumbnail = absoluteUrl(item.thumbnail, source.baseUrl || source.url);
   const publishedAt = item.publishedAt ? new Date(item.publishedAt) : null;
 
-  return { title, url, thumbnail, publishedAt, ...(item.editionDate ? { editionDate: item.editionDate } : {}) };
+  return { title, url, thumbnail, publishedAt, ...(item.editionDate ? { editionDate: item.editionDate } : {}), ...(item.publicationDate ? { publicationDate: item.publicationDate } : {}) };
 }
 
 // ブラウザが実際に表示できる画像かを確認し、遅い画像はテスト全体を止めず失敗扱いにする。

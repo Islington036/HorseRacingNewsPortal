@@ -11,10 +11,12 @@
     parseRss2JsonItems
   } = window.HorseRacingPortalCore;
   const {
+    extractDrfReaderCards,
     extractRacenetReaderCards,
     extractIrishRacingReaderItems,
     extractRacingTvReaderCards,
     extractTheAgeReaderItems,
+    extractTheAgeFeedItems,
     extractTtrTitleMatchingSlug,
     hasExplicitTimezone,
     isCandidateArticleUrl,
@@ -24,6 +26,8 @@
     parseIrishRacingDateTime,
     parseTtrEditionDate,
     pickRacenetReaderTitle,
+    readMirrorArticleItems,
+    readTheAgeArticleItems,
     readZonedParts: timeZoneParts,
     zonedDateToUtc
   } = window.InternationalHorseRacingSourceParsers;
@@ -302,12 +306,41 @@
 
       const latestItem = items.reduce((latest, item) => !latest || item.publishedAt > latest.publishedAt ? item : latest, null);
       if (latestItem && latestItem.publishedAt) {
-        state.siteLatest[site.id] = latestItem.publishedAt.toISOString();
+        state.siteLatest[site.id] = latestItem.publicationDate || latestItem.publishedAt.toISOString();
       }
     }
 
     // 1サイト分のAPI/RSS/HTML候補を順番に試し、最初に抽出できた記事一覧を返す。
     async function fetchSite(site) {
+      if (site.id === "theage_racing") {
+        // 公開CORS対応RSSの正式時刻と、Reader一覧の日付だけの記事をURLで照合する。
+        const response = await readTheAgeArticleItems(
+          async () => extractTheAgeFeedItems(new DOMParser().parseFromString(
+            await fetchProxyText(site.feedUrl, {}, site.requestTimeoutMs), "application/xml"), site),
+          async () => extractTheAgeReaderItems(await fetchText(site.url, {
+            ...site, allowTextProxy: true, textProxyOnly: true
+          })).filter((item) => isCandidateArticleUrl(item.url, site)), state.activeDaysBack
+        );
+        const items = response.items.map((item, index) => normalizeItem(item, site, index)).filter(Boolean);
+        // RSSの20件から外れても、今回一覧に残る同一記事・同一暦日の既知時刻を日付だけへ降格させない。
+        const previousByUrl = new Map(state.allItems.filter((item) => item.sourceId === site.id &&
+          isWithinMaxWindow(item) && isCandidateArticleUrl(item.url, site)).map((item) => [canonicalArticleUrl(item.url, site), item]));
+        items.forEach((item) => {
+          const key = canonicalArticleUrl(item.url, site);
+          const previous = previousByUrl.get(key);
+          const parts = previous && !previous.publicationDate ? timeZoneParts(previous.publishedAt, "Australia/Melbourne") : null;
+          const previousDate = parts ? `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}` : "";
+          if (item.publicationDate && item.publicationDate === previousDate) {
+            item.publishedAt = previous.publishedAt;
+            delete item.publicationDate;
+          }
+          previousByUrl.set(key, item);
+        });
+        // 前回だけの記事を補うのは、片側を確認できなかった更新に限る。
+        return (response.partial ? [...previousByUrl.values()] : items)
+          .sort((left, right) => right.publishedAt - left.publishedAt)
+          .slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+      }
       // sitemapUrl/apiUrl/feedUrl/urlの順で試す。構造化経路があるサイトはHTMLより安定しやすいため優先する。
       // Setで包んでいるのは、設定ミスで同じURLが複数入った場合に無駄な外部アクセスを避けるため。
       // structuredSourcesOnlyの媒体は、API/RSS障害時に一覧HTMLへ落とさない。
@@ -363,7 +396,9 @@
           readerDecorationUrls: sourceUrl === site.sitemapUrl ? site.readerDecorationUrls || [] : []
         };
 
-        for (const proxyUrl of buildProxyUrls(sourceUrl, requestSite)) {
+        // Mirrorの一覧と記事詳細は公式CORS経路で照合し、Readerの相対日時や別サイトのHTMLを代用しない。
+        const mirrorListing = site.id === "mirror_racing" && sourceUrl === site.url;
+        for (const proxyUrl of mirrorListing ? [sourceUrl] : buildProxyUrls(sourceUrl, requestSite)) {
           try {
             // directFetch用のURLだけはサイト設定の追加ヘッダーを付ける。公開プロキシには余計なヘッダーを渡さない。
             // 現在はRacing.comの公開APIヘッダーが対象で、今後ほかの媒体が追加されても同じ境界を維持する。
@@ -375,6 +410,8 @@
             const items = await parseSiteResponse(html, requestSite);
 
             if (items.length > 0) {
+              // 変換APIが古い記事だけを返した場合も、期間内0件を確定する前に公式一覧を確認する。
+              if (site.id === "mirror_racing" && sourceUrl === site.apiUrl && !items.some(isWithinWindow)) break;
               if (site.mergeStructuredSources && sourceUrl !== site.url) {
                 // rss2jsonは無料経路で先頭の一部だけを返すため、API成功後も完全RSSまで一度だけ進む。
                 // 同じURLを別プロキシで再取得せず、次のsourceUrlへ移るため内側ループを終了する。
@@ -462,7 +499,10 @@
         throw new Error("RSSレスポンスをXMLとして解析できませんでした");
       }
       const parser = PARSERS[site.parser] || PARSERS.generic;
-      let rawItems = parser(doc, site, responseText, json);
+      let rawItems = site.id === "mirror_racing" && site.expectedResponseType === "html"
+        ? await readMirrorArticleItems(doc, site, async (url) =>
+          new DOMParser().parseFromString(await fetchProxyText(url, {}, site.requestTimeoutMs), "text/html"), mapWithConcurrency, state.activeDaysBack)
+        : parser(doc, site, responseText, json);
       if (site.readerDecorationUrls && site.readerDecorationUrls.length > 0) {
         // Sitemapのタイトル・日時・URLは維持し、一覧カードと完全URL一致した画像だけを補う。
         // タイトル一致は同名記事や省略見出しの誤結合を起こすため使用しない。
@@ -475,14 +515,17 @@
         }
         rawItems = await hydrateReaderDetailItems(rawItems, site);
       }
-      return dedupeByUrl(
+      const normalizedItems = dedupeByUrl(
         rawItems
           // 各抽出器が返すバラバラの形式を、sourceId/region/thumbnail付きの共通形式へ変換する。
           .map((item, index) => normalizeItem(item, site, index))
           // 日付がDateとして確定しない記事は、3日以内判定ができないためここで落とす。
           .filter(Boolean)
           .filter((item) => item.title && item.url && item.publishedAt instanceof Date && !Number.isNaN(item.publishedAt.getTime()))
-      ).slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+      );
+      // DRFのSitemap掲載順は公開日時順とは限らないため、新着を選んでから表示上限を適用する。
+      if (site.id === "drf") normalizedItems.sort((left, right) => right.publishedAt - left.publishedAt);
+      return normalizedItems.slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
     }
 
     // 構造化経路の記事へ、一覧Readerに存在する同一URLカードの不足項目を装飾する。
@@ -527,7 +570,8 @@
         return extractIrishRacingMarkdownItems(text, site).filter((item) => isAllowedDecorationImage(item.thumbnail, site));
       }
       if (site.readerDecorationParser === "drf") {
-        return extractDrfReaderDecorationItems(text, site);
+        return extractDrfReaderCards(text).filter((item) =>
+          isCandidateArticleUrl(item.url, site) && isAllowedDecorationImage(item.thumbnail, site));
       }
 
       const items = [];
@@ -537,31 +581,6 @@
         if (!isCandidateArticleUrl(url, site) || !isAllowedDecorationImage(thumbnail, site)) continue;
         items.push({ url, thumbnail });
       }
-      return items;
-    }
-
-    // DRFのReader一覧は写真と見出しが別行なので、直前のStoryblok写真を次の記事URLへ結び付ける。
-    // 記事詳細のOG画像は共通ロゴになる場合があるため、一覧で確認できた写真以外は補完しない。
-    function extractDrfReaderDecorationItems(text, site) {
-      const lines = String(text || "").split(/\r?\n/).map((line) => line.trim());
-      const items = [];
-      let pendingImage = "";
-
-      lines.forEach((line) => {
-        const image = line.match(/^!\[[^\]]*\]\((https?:\/\/a-us\.storyblok\.com\/.+)\)$/i);
-        if (image) {
-          pendingImage = image[1];
-          return;
-        }
-
-        const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.drf\.com\/news\/(?!all-news(?:[?#/]|$))[^)]+)\)$/i);
-        if (!heading) return;
-        if (pendingImage && isAllowedDecorationImage(pendingImage, site)) {
-          items.push({ title: heading[1], url: heading[2], thumbnail: pendingImage });
-        }
-        pendingImage = "";
-      });
-
       return items;
     }
 
@@ -833,8 +852,6 @@
       if (site.id === "racingpost_news" || site.id === "racingpost_bloodstock") return extractRacingPostNextDataItems(doc, site);
       // Racing TVはブラウザから公式APIを直接読めないため、現行設定どおりReader Markdownだけを解析する。
       if (site.id === "racingtv") return extractRacingTvMarkdownItems(rawText, site);
-      // The AgeはReader一覧の画像・見出し・日付を同一URLで照合した共有パーサーを使う。
-      if (site.id === "theage_racing") return extractTheAgeReaderItems(rawText);
       // At The RacesはJina Reader経由だと記事リンクが落ちるため、見出しと日付から公式URL形式を復元する。
       if (site.id === "attheraces") return extractAtTheRacesMarkdownItems(rawText, site);
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
@@ -1991,6 +2008,7 @@
         url,
         publishedAt,
         ...(raw.editionDate ? { editionDate: raw.editionDate } : {}),
+        ...(site.id === "theage_racing" && raw.publicationDate ? { publicationDate: raw.publicationDate } : {}),
         dateEstimated: Boolean(raw.dateEstimated),
         thumbnail: resolveThumbnail(raw.thumbnail, site, url),
         sortIndex: index
@@ -2689,10 +2707,13 @@
     function renderCard(item, index = 0) {
       // TTRのエディション日は日付精度のまま示し、並べ替え用の午前0時を公開時刻として表示しない。
       const editionDate = item.sourceId === "ttrausnz" && item.editionDate;
-      const dateText = editionDate || (item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt));
+      const publicationDate = item.sourceId === "theage_racing" && item.publicationDate;
+      const dateOnly = editionDate || publicationDate;
+      const dateText = dateOnly || (item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt));
       const dateTitle = editionDate
         ? t("editionDateTitle", { date: editionDate })
-        : item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
+        : publicationDate ? t("publicationDateTitle", { date: publicationDate })
+          : item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
       const isNew = state.animatedItemIds.has(item.id);
       const className = isNew ? "news-card is-new" : "news-card";
       const animationStyle = isNew ? ` style="--appear-delay: ${Math.min(index, 10) * 28}ms"` : "";
@@ -2704,7 +2725,7 @@
             <div class="meta">
               <span class="source-badge">${escapeHtml(item.source)}</span>
               <span class="region-badge">${escapeHtml(getRegionLabel(item.region))}</span>
-              <time datetime="${escapeHtml(editionDate || item.publishedAt.toISOString())}" title="${escapeHtml(dateTitle)}">${escapeHtml(dateText)}</time>
+              <time datetime="${escapeHtml(dateOnly || item.publishedAt.toISOString())}" title="${escapeHtml(dateTitle)}">${escapeHtml(dateText)}</time>
             </div>
           </div>
         </a>
@@ -2807,7 +2828,7 @@
         : "";
       const messages = [
         ...state.errors.map((error) => ({ type: "error", site: error.site, message: error.message })),
-        ...buildWindowNotes(),
+        ...buildWindowNotes(failedNames),
         ...buildImageNotes()
       ];
 
@@ -2828,11 +2849,12 @@
     }
 
     // 取得はできたが現在の表示日数内に記事が無い媒体を、媒体ごとの最新検出日から説明する。
-    function buildWindowNotes() {
+    function buildWindowNotes(failedNames) {
       const visibleBySite = new Set(getDateScopedItems().map((item) => item.sourceId));
 
       return CONFIG.SITES.map((site) => {
-        if (visibleBySite.has(site.id)) return null;
+        // 取得失敗時の前回検出日は、今回の「期間内の記事なし」の根拠にはならない。
+        if (failedNames.includes(site.name) || visibleBySite.has(site.id)) return null;
         const latestIso = state.siteLatest[site.id];
         if (!latestIso) return null;
 
@@ -2840,7 +2862,7 @@
         if (Number.isNaN(latestDate.getTime())) return null;
         // TTRの最新検出もエディション暦日で示し、内部の並べ替え時刻をJSTの公開時刻へ見せない。
         const editionParts = site.id === "ttrausnz" ? timeZoneParts(latestDate, "Australia/Sydney") : null;
-        const latestText = editionParts
+        const latestText = site.id === "theage_racing" && /^20\d{2}-\d{2}-\d{2}$/.test(latestIso) ? latestIso : editionParts
           ? `${editionParts.year}-${String(editionParts.month).padStart(2, "0")}-${String(editionParts.day).padStart(2, "0")}`
           : formatDateTime(latestDate);
 

@@ -110,7 +110,8 @@
           excludePathHints: ["/nascar-driver-", "-nascar-driver-"],
           preferTextProxy: true, tryDirect: true, allowEmptyStructured: true, cacheVersion: 1
         },
-        { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", apiUrl: MIRROR_RACING_RSS_API, baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], preferTextProxy: true, tryDirect: true, rss2Json: true, exclusiveStructuredJson: true },
+        // 新着を含むRSS変換を優先し、不通・古い応答のときだけ公式記事の公開日時を少数・低並列で確認する。
+        { id: "mirror_racing", name: "Mirror Horse Racing", region: "europe", url: "https://www.mirror.co.uk/sport/horse-racing/", apiUrl: MIRROR_RACING_RSS_API, baseUrl: "https://www.mirror.co.uk", parser: "generic", pathHints: ["/sport/horse-racing/"], tryDirect: true, rss2Json: true, exclusiveStructuredJson: true, detailHydrationLimit: 6, detailHydrationConcurrency: 2, cacheVersion: 1 },
         // Sporting Life自身のWeb画面が利用する公開JSON APIを直接読む。
         // CORS許可済みの構造化データなので、Cookie同意画面や公開プロキシの遅延を避けられる。
         { id: "sportinglife_features", name: "Sporting Life Racing", region: "europe", url: "https://www.sportinglife.com/racing/features", apiUrl: "https://www.sportinglife.com/api/content/articles/summary?limit=13&offset=0&basketPath=sl%2Fracing", baseUrl: "https://www.sportinglife.com", parser: "generic", pathHints: ["/racing/news/", "/racing/features/"], tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true },
@@ -123,7 +124,8 @@
         { id: "trc_sales_previews", name: "Thoroughbred Racing Sales", region: "europe", url: "https://www.thoroughbredracing.com/sales-previews/", apiUrl: THOROUGHBRED_RACING_RSS_API, feedUrl: THOROUGHBRED_RACING_RSS, rssCategory: "Sales Previews", forceHttps: true, baseUrl: "https://www.thoroughbredracing.com", parser: "generic", pathHints: ["/sales-previews/"], includeAnySameHost: true, tryDirect: true, structuredSourcesOnly: true, allowEmptyStructured: true, exclusiveStructuredJson: true, mergeStructuredSources: true },
         { id: "bloodhorse", name: "BloodHorse", region: "america", url: "https://www.bloodhorse.com/horse-racing/articles/index", baseUrl: "https://www.bloodhorse.com", parser: "generic", pathHints: ["/horse-racing/articles/"], preferTextProxy: true, textProxyOnly: true },
         { id: "tdn_america", name: "TDN America", region: "america", url: "https://www.thoroughbreddailynews.com/category/news/", apiUrl: "https://www.thoroughbreddailynews.com/wp-json/wp/v2/posts?categories=1&per_page=20&_embed=1", feedUrl: "https://www.thoroughbreddailynews.com/category/news/feed/", baseUrl: "https://www.thoroughbreddailynews.com", parser: "generic", pathHints: ["/category/news/"], includeAnySameHost: true, tryDirect: true, requestCache: "no-store", structuredSourcesOnly: true, exclusiveStructuredJson: true, cacheVersion: 1 },
-        { id: "drf", name: "Daily Racing Form", region: "america", url: "https://www.drf.com/news/all-news", sitemapUrl: "https://www.drf.com/sitemap-news.xml", readerDecorationUrls: ["https://www.drf.com/news/all-news", "https://www.drf.com/news/all-news?page=2"], readerDecorationParser: "drf", readerDecorationImagePattern: /a-us\.storyblok\.com/i, readerDecorationImageOrigins: ["https://a-us.storyblok.com"], baseUrl: "https://www.drf.com", parser: "generic", pathPrefixes: ["/news/"], pathHints: ["/news/"], preferTextProxy: true, tryDirect: true },
+        // 画像パスは共有DRFパーサーで限定し、旧CDNと現在の公式画像originだけを補完に使う。
+        { id: "drf", name: "Daily Racing Form", region: "america", url: "https://www.drf.com/news/all-news", sitemapUrl: "https://www.drf.com/sitemap-news.xml", readerDecorationUrls: ["https://www.drf.com/news/all-news", "https://www.drf.com/news/all-news?page=2"], readerDecorationParser: "drf", readerDecorationImageOrigins: ["https://a-us.storyblok.com", "https://www.drf.com"], baseUrl: "https://www.drf.com", parser: "generic", pathPrefixes: ["/news/"], pathHints: ["/news/"], preferTextProxy: true, tryDirect: true },
         { id: "paulickreport", name: "Paulick Report", region: "america", url: "https://paulickreport.com/news", apiUrl: PAULICK_REPORT_BING_RSS_API, baseUrl: "https://paulickreport.com", parser: "generic", pathHints: ["/news/"], tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true },
         { id: "racing_com", name: "Racing.com", region: "australia", url: "https://www.racing.com/news/latest-news", apiUrl: "https://graphql.api.racing.com?query=" + encodeURIComponent(RACING_COM_NEWS_QUERY), baseUrl: "https://www.racing.com", parser: "generic", pathHints: ["/news/"], preferTextProxy: false, tryDirect: true, requestHeaders: { "x-api-key": RACING_COM_PUBLIC_API_KEY, "content-type": "application/json;charset=UTF-8" } },
         // Racenetは公式robots.txtで無許可の自動取得を禁止し、Readerもブラウザ確認画面だけを返す。
@@ -132,8 +134,8 @@
         // 元HTMLはブラウザCORSを許可せず公開CORSプロキシも不安定なため、ReaderのMarkdownだけを短く試す。
         // 専用抽出器が/edition/YYYY-MM-DD/配下の個別記事へ限定し、固定ページの混入を防ぐ。
         { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathPrefixes: ["/edition/"], pathHints: ["/edition/"], preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000, cacheVersion: 1 },
-        // 一般CORSプロキシの失敗待ちを減らし、媒体別テスターで確認したReaderを先に使う。
-        { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true },
+        // 公式RSSの公開日時を優先し、総合Sportフィードの件数上限から漏れた記事をReaderの日付精度で補う。
+        { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", feedUrl: "https://www.theage.com.au/rss/sport.xml", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"], articlePathPattern: /^\/sport\/racing\/[^/]+-20\d{6}-p[a-z0-9]+\.html$/i, preferTextProxy: true, cacheVersion: 1 },
         // Business Hub（127）は住所・担当者などの事業者紹介。公式RESTで除外し、HTMLから再混入させない。
         // RSSはブラウザ/CORSプロキシ経路が不通のため、直接CORS対応のRESTと同URLの予備プロキシに限定する。
         { id: "thestraight", name: "The Straight", region: "australia", url: "https://thestraight.com.au/", apiUrl: "https://thestraight.com.au/wp-json/wp/v2/posts?categories_exclude=127&per_page=20&_embed=1", baseUrl: "https://thestraight.com.au", parser: "generic", pathHints: ["/news/", "/racing/", "/bloodstock/"], includeAnySameHost: true, tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true, excludedCategoryIds: [127], cacheVersion: 1 },
@@ -202,6 +204,7 @@
         dateUnknown: "日時未検出",
         dateEstimatedTitle: ({ date }) => `取得順から仮配置: ${date}`,
         editionDateTitle: ({ date }) => `エディション日付: ${date}（公開時刻は未配信）`,
+        publicationDateTitle: ({ date }) => `公開日: ${date}（公開時刻は未配信）`,
         emptyState: "表示できるニュースがありません。検索条件を変えるか、更新を試してください。",
         summaryEmpty: "該当サイト",
         sourceDetails: "媒体別の状況",
@@ -275,6 +278,7 @@
         dateUnknown: "Date unknown",
         dateEstimatedTitle: ({ date }) => `Date estimated from the source listing: ${date}`,
         editionDateTitle: ({ date }) => `Edition date: ${date} (publication time not provided)`,
+        publicationDateTitle: ({ date }) => `Publication date: ${date} (publication time not provided)`,
         emptyState: "No news to display. Try changing the search or filters, or refresh.",
         summaryEmpty: "Matching sources",
         sourceDetails: "Source details",

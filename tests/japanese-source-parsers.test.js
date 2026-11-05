@@ -95,6 +95,19 @@ function run() {
     thumbnail: "https://tospo-keiba.jp/images/article/thumbnail/20260917/170048/sample.jpg"
   }]);
 
+  // 旧画像パスも維持しつつ、配信元が切り替えた幅指定付きWebP画像を同じカードへ結び付ける。
+  const currentTospoReader = tospoReader.replace(
+    "/images/article/thumbnail/20260917/170048/sample.jpg",
+    "/images/article/thumbnail_v1/w320/20261105/191122/sample.jpg.webp"
+  );
+  assert.deepEqual(extractTospoReaderCards(currentTospoReader), [{
+    title: "完全見出し",
+    url: "https://tospo-keiba.jp/breaking_news/75702",
+    publishedAt: "2026-09-17T17:00:00+09:00",
+    thumbnail: "https://tospo-keiba.jp/images/article/thumbnail_v1/w320/20261105/191122/sample.jpg.webp"
+  }]);
+  assert.deepEqual(extractTospoReaderCards(currentTospoReader.replace("https://tospo-keiba.jp/images/", "https://other.example/images/")), []);
+
   const flattenedSitemap = [
     "https://tospo-keiba.jp/breaking\\_news/75702 東スポ競馬 ja 2026-09-17T17:00:49+09:00 最新ニュース見出し",
     "https://tospo-keiba.jp/sakagamiblood/76816 東スポ競馬 ja 2026-09-17T19:15:00+09:00 血統査定の記事は対象外",
@@ -112,7 +125,7 @@ function run() {
     publishedAt: "2026-09-17T09:22:20+09:00",
     thumbnail: ""
   }]);
-  console.log("japanese-source-parsers: 5 tests passed");
+  console.log("japanese-source-parsers: 6 tests passed");
 }
 
 run();

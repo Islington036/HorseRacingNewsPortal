@@ -371,17 +371,66 @@
     for (const match of raw.matchAll(cardPattern)) {
       const block = match[3];
       const heading = block.match(/#{2,4}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?theage\.com\.au\/sport\/racing\/[^)]+)\)/i);
-      const publishedAt = (block.match(/^\*\s+([A-Za-z]+\s+\d{1,2},\s+20\d{2})\s*$/m) || [])[1] || "";
+      const date = block.match(/^\*\s+([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2})\s*$/m);
+      const month = date && ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(date[1].slice(0, 3).toLowerCase()) + 1;
+      const publicationDate = month ? `${date[3]}-${String(month).padStart(2, "0")}-${date[2].padStart(2, "0")}` : "";
+      // Readerには公開時刻がない。地域の暦日は並べ替えにだけ使い、午前0時を公開時刻として表示しない。
+      const publishedAt = publicationDate ? zonedDateToUtc({ year: Number(date[3]), month, day: Number(date[2]), hour: 0, minute: 0 }, "Australia/Melbourne") : null;
       if (!heading || !publishedAt || canonicalUrl(heading[2]) !== canonicalUrl(match[2])) continue;
       items.push({
         title: cleanWhitespace(heading[1]),
         url: heading[2],
         publishedAt,
+        publicationDate,
         thumbnail: match[1]
       });
     }
 
     return items;
+  }
+
+  // The Ageの総合Sport RSSから、正式な競馬記事URLとタイムゾーン付き公開日時だけを読む。
+  function extractTheAgeFeedItems(doc, site) {
+    if (doc.querySelector("parsererror") || doc.documentElement?.localName !== "rss") {
+      throw new Error("The AgeのRSSを解析できませんでした");
+    }
+    return [...doc.querySelectorAll("item")].map((entry) => {
+      const value = (selector) => cleanWhitespace(entry.querySelector(selector)?.textContent);
+      const url = canonicalUrl(value("link"));
+      if (!isCandidateArticleUrl(url, site) || !/^https:\/\/www\.theage\.com\.au\/sport\/racing\/[^/]+-20\d{6}-p[a-z0-9]+\.html$/i.test(url)) return null;
+      const date = value("pubDate");
+      const publishedAt = hasExplicitTimezone(date) || /(?:Z|[+-]\d{2}:?\d{2})$/i.test(date) ? parseInternationalDate(date) : null;
+      if (!value("title") || !publishedAt) return null;
+      return { title: value("title"), url, publishedAt, thumbnail: entry.querySelector("enclosure")?.getAttribute("url") || "" };
+    }).filter(Boolean);
+  }
+
+  // RSSは正確な時刻、ReaderはRSSの20件上限から漏れる競馬記事の範囲を補う。片方の障害で成功分を捨てない。
+  async function readTheAgeArticleItems(readFeed, readReader, daysBack) {
+    const [feed, reader] = await Promise.allSettled([readFeed(), readReader()]);
+    const feedItems = feed.status === "fulfilled" ? feed.value : [];
+    const readerItems = reader.status === "fulfilled" ? reader.value : [];
+    const itemsByUrl = new Map(readerItems.map((item) => [canonicalUrl(item.url), { ...item, url: canonicalUrl(item.url) }]));
+    feedItems.forEach((item) => {
+      const url = canonicalUrl(item.url);
+      // RSSの正式日時を優先し、Readerだけが持つ画像は欠損時に限って補う。日付のみのフラグは引き継がない。
+      itemsByUrl.set(url, { ...item, url, thumbnail: item.thumbnail || itemsByUrl.get(url)?.thumbnail || "" });
+    });
+    if (!itemsByUrl.size) {
+      // 総合RSSに競馬がないだけではサイト全体の0件を証明できず、Readerも読めなければ未確認として扱う。
+      throw (reader.status === "rejected" && reader.reason) || (feed.status === "rejected" && feed.reason) || new Error("The Ageの競馬記事を確認できませんでした");
+    }
+    const now = Date.now();
+    const cutoff = now - daysBack * 86400000;
+    if (!readerItems.length && !feedItems.some((item) => item.publishedAt >= cutoff && item.publishedAt <= now + 12 * 3600000)) {
+      // 総合RSSは件数上限があり、一覧を確認できなければ古い競馬記事だけで期間内0件とは断定できない。
+      throw new Error("The Ageの一覧を確認できず、期間内の記事の有無を確定できませんでした");
+    }
+    return {
+      items: [...itemsByUrl.values()].sort((left, right) => right.publishedAt - left.publishedAt),
+      partial: feed.status === "rejected" || reader.status === "rejected" || !readerItems.length,
+      route: feedItems.length ? readerItems.length ? "official-rss+reader" : "official-rss" : "reader"
+    };
   }
 
   // RacenetのReaderカードから、実写真・本文・個別記事URLだけを抜き出す。
@@ -508,11 +557,84 @@
       /^looking-ahead(?:-|$)/i.test(value);
   }
 
+  // DRF一覧の写真と直後の記事見出しを結び付け、旧CDNと現在の公式画像経路を同じ条件で扱う。
+  function extractDrfReaderCards(text) {
+    const items = [];
+    let pendingImage = "";
+
+    for (const line of String(text || "").split(/\r?\n/).map((value) => value.trim())) {
+      if (line.includes("![")) {
+        // 画像変換URL中の括弧を失わないよう末尾まで読む。広告・別ホストの画像は候補を消す。
+        const image = line.match(/^!\[[^\]]*\]\((https?:\/\/(?:a-us\.storyblok\.com\/|www\.drf\.com\/sb\/image\/assets\/).+)\)$/i);
+        pendingImage = image ? image[1] : "";
+        continue;
+      }
+
+      const heading = line.match(/^#{2,6}\s+\[([^\]]+)\]\((https?:\/\/www\.drf\.com\/news\/(?!all-news(?:[?#/)]|$))[^)]+)\)$/i);
+      if (heading && pendingImage) items.push({ title: cleanWhitespace(heading[1]), url: heading[2], thumbnail: pendingImage });
+      // 空行以外はカード境界とし、広告・区切り・写真のない次記事へ前の画像を持ち越さない。
+      if (line) pendingImage = "";
+    }
+
+    return items;
+  }
+
+  // Mirrorの一覧日時は相対表記・別カテゴリの混在があるため、同じ正式記事の公開メタデータだけを採用する。
+  async function readMirrorArticleItems(doc, site, readDetailDocument, mapWithConcurrency, daysBack) {
+    const cards = new Map();
+    let hasUncheckedCards = false;
+    for (const card of doc.querySelectorAll("article[data-tmdatatrack-articleid]")) {
+      const link = card.querySelector('[data-testid="teaser-heading"] a[href]');
+      const title = cleanWhitespace(link && link.textContent);
+      if (!title) continue;
+      let url;
+      try {
+        url = new URL(link.getAttribute("href"), site.url);
+      } catch (_error) {
+        continue;
+      }
+      const match = url.pathname.match(/^\/sport\/horse-racing\/[^/]+-(\d+)$/);
+      if (url.origin !== site.baseUrl || !match || match[1] !== card.getAttribute("data-tmdatatrack-articleid")) continue;
+      // トラッキングクエリではなく公式記事のorigin+pathnameで候補を重複排除する。
+      const articleUrl = url.origin + url.pathname;
+      if (cards.has(articleUrl)) continue;
+      if (cards.size >= site.detailHydrationLimit) {
+        hasUncheckedCards = true;
+        break;
+      }
+      cards.set(articleUrl, { title, url: articleUrl, thumbnail: card.querySelector("img")?.getAttribute("src") || "" });
+    }
+    if (!cards.size) throw new Error("Mirrorの競馬記事カードを抽出できませんでした");
+
+    const items = await mapWithConcurrency([...cards.values()], site.detailHydrationConcurrency, async (card) => {
+      const detail = await readDetailDocument(card.url);
+      const canonical = detail.querySelector('link[rel="canonical"]')?.getAttribute("href");
+      const date = detail.querySelector('meta[property="article:published_time"]')?.getAttribute("content") || "";
+      const publishedAt = parseInternationalDate(date);
+      // 別記事への転送や日時欠落を「期間内の記事なし」とせず、失敗時はポータルの前回キャッシュを保つ。
+      if (canonical !== card.url || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(date) || !publishedAt) {
+        throw new Error("Mirrorの記事URL・公開日時を確認できませんでした");
+      }
+      // 同じ記事を確認できたら、短縮されることがある一覧見出しより記事自身の見出しを優先する。
+      const title = cleanWhitespace(detail.querySelector("h1")?.textContent) || card.title;
+      return { ...card, title, publishedAt, thumbnail: detail.querySelector('meta[property="og:image"]')?.getAttribute("content") || card.thumbnail };
+    });
+    // 一覧順は公開日時順とは限らない。未確認カードが残るときは、期間内0件と断定しない。
+    const now = Date.now();
+    const start = now - daysBack * 86400000;
+    if (hasUncheckedCards && !items.some((item) => item.publishedAt >= start && item.publishedAt <= now + 12 * 3600000)) {
+      throw new Error("Mirrorの記事詳細の確認上限に達し、期間内の記事の有無を確定できませんでした");
+    }
+    return items.sort((left, right) => right.publishedAt - left.publishedAt);
+  }
+
   return Object.freeze({
+    extractDrfReaderCards,
     extractIrishRacingReaderItems,
     extractRacenetReaderCards,
     extractRacingTvReaderCards,
     extractTheAgeReaderItems,
+    extractTheAgeFeedItems,
     extractTtrTitleMatchingSlug,
     hasExplicitTimezone,
     isCandidateArticleUrl,
@@ -525,6 +647,8 @@
     parseTtrEditionDate,
     pickRacenetReaderTitle,
     readZonedParts,
+    readMirrorArticleItems,
+    readTheAgeArticleItems,
     zonedDateToUtc
   });
 });

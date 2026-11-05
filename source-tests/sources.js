@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261016-ttr-edition-metadata";
+import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseMirrorListing, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261106-news-sources";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -54,12 +54,12 @@ export const SOURCES = [
   ...(theAgeSite ? [{
     ...theAgeSite,
     id: "theage_racing_reader",
-    name: `${theAgeSite.name} Reader Listing`,
+    name: `${theAgeSite.name} 公式RSS・Reader日付補完`,
     parse: parseTheAgeReader,
-    // 本体と同じく公開CORS経路の後にReaderへフォールバックし、最終的な成功経路も表示する。
+    // 公式RSSの正式日時とReaderだけの記事を本体と同じ条件で照合する。IDは旧ブックマーク互換で維持する。
     allowTextProxy: theAgeSite.allowTextProxy !== false,
-    timeoutMs: theAgeSite.requestTimeoutMs,
-    requiredRoute: "text-proxy",
+    timeoutMs: theAgeSite.requestTimeoutMs || internationalConfig.REQUEST_TIMEOUT_MS,
+    maxItems: internationalConfig.MAX_ITEMS_PER_SITE,
     requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
@@ -241,9 +241,11 @@ export const SOURCES = [
       "https://www.drf.com/news/all-news?page=2"
     ],
     parseReaderDecoration: parseDrfReaderCards,
-    decorationImagePattern: /a-us\.storyblok\.com/i,
-    decorationImageOrigins: ["https://a-us.storyblok.com"],
+    // 本体と同じパーサーで画像パスを検証し、旧CDN・公式画像のorigin制限も合わせる。
+    decorationImageOrigins: ["https://a-us.storyblok.com", "https://www.drf.com"],
     hydrationTimeoutMs: 20000,
+    maxItems: internationalConfig.MAX_ITEMS_PER_SITE,
+    requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,
     minimumImageCoverage: 0.25
@@ -297,7 +299,7 @@ export const SOURCES = [
     textProxyOnly: true,
     readerDecorationUrls: tospoSite.readerListingUrls,
     parseReaderDecoration: parseTospoReaderCards,
-    decorationImagePattern: /\/images\/article\/thumbnail\//i,
+    // 画像パスの検証は本体と共通の専用パーサーへ集約し、配信元ホストの制限は維持する。
     decorationImageOrigins: ["https://tospo-keiba.jp"],
     readerCacheBust: true,
     // 東スポのサイトマップは通常20件弱なので、既定8件で打ち切らず2ページ目の記事まで結合を検証する。
@@ -400,6 +402,20 @@ export const SOURCES = [
     // 配信元のdummy画像は本体でダミー表示へ置換されるため、実写真の最低比率だけを要求する。
     minimumImageCoverage: 0.5,
     forbiddenUrlPatterns: [/\/news\/?$/i]
+  },
+  {
+    ...mirrorRacingSite,
+    id: "mirror_racing_listing",
+    name: `${mirrorRacingSite.name} 公式一覧・記事日時`,
+    parse: parseMirrorListing,
+    tryDirect: true,
+    directOnly: true,
+    requiredRoute: "direct",
+    pathPrefixes: ["/sport/horse-racing/"],
+    requireDescendingDates: true,
+    requireDate: true,
+    minimumItems: 1,
+    minimumImageCoverage: 0
   },
   {
     id: "mirror_racing_rss_api",
