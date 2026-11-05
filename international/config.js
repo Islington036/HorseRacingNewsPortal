@@ -133,8 +133,8 @@
         // 元HTMLはブラウザCORSを許可せず公開CORSプロキシも不安定なため、ReaderのMarkdownだけを短く試す。
         // 専用抽出器が/edition/YYYY-MM-DD/配下の個別記事へ限定し、固定ページの混入を防ぐ。
         { id: "ttrausnz", name: "TTR AusNZ", region: "australia", url: "https://www.ttrausnz.com.au/", baseUrl: "https://www.ttrausnz.com.au", parser: "generic", pathPrefixes: ["/edition/"], pathHints: ["/edition/"], preferTextProxy: true, textProxyOnly: true, requestTimeoutMs: 20000, cacheVersion: 1 },
-        // 一般CORSプロキシの失敗待ちを減らし、媒体別テスターで確認したReaderを先に使う。
-        { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"], preferTextProxy: true },
+        // 公式RSSの公開日時を優先し、総合Sportフィードの件数上限から漏れた記事をReaderの日付精度で補う。
+        { id: "theage_racing", name: "The Age Racing", region: "australia", url: "https://www.theage.com.au/sport/racing", feedUrl: "https://www.theage.com.au/rss/sport.xml", baseUrl: "https://www.theage.com.au", parser: "generic", pathHints: ["/sport/racing/"], articlePathPattern: /^\/sport\/racing\/[^/]+-20\d{6}-p[a-z0-9]+\.html$/i, preferTextProxy: true, cacheVersion: 1 },
         // Business Hub（127）は住所・担当者などの事業者紹介。公式RESTで除外し、HTMLから再混入させない。
         // RSSはブラウザ/CORSプロキシ経路が不通のため、直接CORS対応のRESTと同URLの予備プロキシに限定する。
         { id: "thestraight", name: "The Straight", region: "australia", url: "https://thestraight.com.au/", apiUrl: "https://thestraight.com.au/wp-json/wp/v2/posts?categories_exclude=127&per_page=20&_embed=1", baseUrl: "https://thestraight.com.au", parser: "generic", pathHints: ["/news/", "/racing/", "/bloodstock/"], includeAnySameHost: true, tryDirect: true, structuredSourcesOnly: true, exclusiveStructuredJson: true, excludedCategoryIds: [127], cacheVersion: 1 },
@@ -203,6 +203,7 @@
         dateUnknown: "日時未検出",
         dateEstimatedTitle: ({ date }) => `取得順から仮配置: ${date}`,
         editionDateTitle: ({ date }) => `エディション日付: ${date}（公開時刻は未配信）`,
+        publicationDateTitle: ({ date }) => `公開日: ${date}（公開時刻は未配信）`,
         emptyState: "表示できるニュースがありません。検索条件を変えるか、更新を試してください。",
         summaryEmpty: "該当サイト",
         sourceDetails: "媒体別の状況",
@@ -276,6 +277,7 @@
         dateUnknown: "Date unknown",
         dateEstimatedTitle: ({ date }) => `Date estimated from the source listing: ${date}`,
         editionDateTitle: ({ date }) => `Edition date: ${date} (publication time not provided)`,
+        publicationDateTitle: ({ date }) => `Publication date: ${date} (publication time not provided)`,
         emptyState: "No news to display. Try changing the search or filters, or refresh.",
         summaryEmpty: "Matching sources",
         sourceDetails: "Source details",

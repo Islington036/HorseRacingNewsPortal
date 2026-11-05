@@ -1,4 +1,4 @@
-import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseMirrorListing, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261106-mirror-coverage";
+import { parseBloodHorseReaderCards, parseDailyMailFeed, parseDrfReaderCards, parseFeed, parseIrishFieldTopic, parseIrishRacingReader, parseIrishRacingReaderCards, parseLoveracingReader, parseMirrorListing, parseNewsSitemap, parsePaulickBingRssJson, parseRacingComGraphql, parseRacingTvReader, parseRss2Json, parseSportingLifeApi, parseTheAgeReader, parseTospoNewsSitemap, parseTospoReaderCards, parseTtrAusNzReader, parseWordPressPosts } from "./core.js?v=20261106-theage-dates-6";
 
 // Racing.comの公開フロントエンド設定をテスト側へ複製せず、本体と同じURL・公開ヘッダーを参照する。
 const internationalConfig = window.InternationalHorseRacingPortalDefinition &&
@@ -54,12 +54,12 @@ export const SOURCES = [
   ...(theAgeSite ? [{
     ...theAgeSite,
     id: "theage_racing_reader",
-    name: `${theAgeSite.name} Reader Listing`,
+    name: `${theAgeSite.name} 公式RSS・Reader日付補完`,
     parse: parseTheAgeReader,
-    // 本体と同じくReaderを優先し、失敗時は公開CORS経路を試す。最終的な成功経路も表示する。
+    // 公式RSSの正式日時とReaderだけの記事を本体と同じ条件で照合する。IDは旧ブックマーク互換で維持する。
     allowTextProxy: theAgeSite.allowTextProxy !== false,
-    timeoutMs: theAgeSite.requestTimeoutMs,
-    requiredRoute: "text-proxy",
+    timeoutMs: theAgeSite.requestTimeoutMs || internationalConfig.REQUEST_TIMEOUT_MS,
+    maxItems: internationalConfig.MAX_ITEMS_PER_SITE,
     requireDescendingDates: true,
     requireDate: true,
     minimumItems: 1,

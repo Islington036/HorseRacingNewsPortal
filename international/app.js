@@ -15,6 +15,7 @@
     extractIrishRacingReaderItems,
     extractRacingTvReaderCards,
     extractTheAgeReaderItems,
+    extractTheAgeFeedItems,
     extractTtrTitleMatchingSlug,
     hasExplicitTimezone,
     isCandidateArticleUrl,
@@ -25,6 +26,7 @@
     parseTtrEditionDate,
     pickRacenetReaderTitle,
     readMirrorArticleItems,
+    readTheAgeArticleItems,
     readZonedParts: timeZoneParts,
     zonedDateToUtc
   } = window.InternationalHorseRacingSourceParsers;
@@ -303,12 +305,41 @@
 
       const latestItem = items.reduce((latest, item) => !latest || item.publishedAt > latest.publishedAt ? item : latest, null);
       if (latestItem && latestItem.publishedAt) {
-        state.siteLatest[site.id] = latestItem.publishedAt.toISOString();
+        state.siteLatest[site.id] = latestItem.publicationDate || latestItem.publishedAt.toISOString();
       }
     }
 
     // 1サイト分のAPI/RSS/HTML候補を順番に試し、最初に抽出できた記事一覧を返す。
     async function fetchSite(site) {
+      if (site.id === "theage_racing") {
+        // 公開CORS対応RSSの正式時刻と、Reader一覧の日付だけの記事をURLで照合する。
+        const response = await readTheAgeArticleItems(
+          async () => extractTheAgeFeedItems(new DOMParser().parseFromString(
+            await fetchProxyText(site.feedUrl, {}, site.requestTimeoutMs), "application/xml"), site),
+          async () => extractTheAgeReaderItems(await fetchText(site.url, {
+            ...site, allowTextProxy: true, textProxyOnly: true
+          })).filter((item) => isCandidateArticleUrl(item.url, site)), state.activeDaysBack
+        );
+        const items = response.items.map((item, index) => normalizeItem(item, site, index)).filter(Boolean);
+        // RSSの20件から外れても、今回一覧に残る同一記事・同一暦日の既知時刻を日付だけへ降格させない。
+        const previousByUrl = new Map(state.allItems.filter((item) => item.sourceId === site.id &&
+          isWithinMaxWindow(item) && isCandidateArticleUrl(item.url, site)).map((item) => [canonicalArticleUrl(item.url, site), item]));
+        items.forEach((item) => {
+          const key = canonicalArticleUrl(item.url, site);
+          const previous = previousByUrl.get(key);
+          const parts = previous && !previous.publicationDate ? timeZoneParts(previous.publishedAt, "Australia/Melbourne") : null;
+          const previousDate = parts ? `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}` : "";
+          if (item.publicationDate && item.publicationDate === previousDate) {
+            item.publishedAt = previous.publishedAt;
+            delete item.publicationDate;
+          }
+          previousByUrl.set(key, item);
+        });
+        // 前回だけの記事を補うのは、片側を確認できなかった更新に限る。
+        return (response.partial ? [...previousByUrl.values()] : items)
+          .sort((left, right) => right.publishedAt - left.publishedAt)
+          .slice(0, site.maxItems || CONFIG.MAX_ITEMS_PER_SITE);
+      }
       // sitemapUrl/apiUrl/feedUrl/urlの順で試す。構造化経路があるサイトはHTMLより安定しやすいため優先する。
       // Setで包んでいるのは、設定ミスで同じURLが複数入った場合に無駄な外部アクセスを避けるため。
       // structuredSourcesOnlyの媒体は、API/RSS障害時に一覧HTMLへ落とさない。
@@ -841,8 +872,6 @@
       if (site.id === "racingpost_news" || site.id === "racingpost_bloodstock") return extractRacingPostNextDataItems(doc, site);
       // Racing TVはブラウザから公式APIを直接読めないため、現行設定どおりReader Markdownだけを解析する。
       if (site.id === "racingtv") return extractRacingTvMarkdownItems(rawText, site);
-      // The AgeはReader一覧の画像・見出し・日付を同一URLで照合した共有パーサーを使う。
-      if (site.id === "theage_racing") return extractTheAgeReaderItems(rawText);
       // At The RacesはJina Reader経由だと記事リンクが落ちるため、見出しと日付から公式URL形式を復元する。
       if (site.id === "attheraces") return extractAtTheRacesMarkdownItems(rawText, site);
       // 以下はHTML構造やAPIレスポンスが一般的なarticle抽出とずれるサイトだけ、専用関数で先に拾う。
@@ -1999,6 +2028,7 @@
         url,
         publishedAt,
         ...(raw.editionDate ? { editionDate: raw.editionDate } : {}),
+        ...(site.id === "theage_racing" && raw.publicationDate ? { publicationDate: raw.publicationDate } : {}),
         dateEstimated: Boolean(raw.dateEstimated),
         thumbnail: resolveThumbnail(raw.thumbnail, site, url),
         sortIndex: index
@@ -2697,10 +2727,13 @@
     function renderCard(item, index = 0) {
       // TTRのエディション日は日付精度のまま示し、並べ替え用の午前0時を公開時刻として表示しない。
       const editionDate = item.sourceId === "ttrausnz" && item.editionDate;
-      const dateText = editionDate || (item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt));
+      const publicationDate = item.sourceId === "theage_racing" && item.publicationDate;
+      const dateOnly = editionDate || publicationDate;
+      const dateText = dateOnly || (item.dateEstimated ? t("dateUnknown") : formatDateTime(item.publishedAt));
       const dateTitle = editionDate
         ? t("editionDateTitle", { date: editionDate })
-        : item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
+        : publicationDate ? t("publicationDateTitle", { date: publicationDate })
+          : item.dateEstimated ? t("dateEstimatedTitle", { date: formatDateTime(item.publishedAt) }) : formatDateTime(item.publishedAt);
       const isNew = state.animatedItemIds.has(item.id);
       const className = isNew ? "news-card is-new" : "news-card";
       const animationStyle = isNew ? ` style="--appear-delay: ${Math.min(index, 10) * 28}ms"` : "";
@@ -2712,7 +2745,7 @@
             <div class="meta">
               <span class="source-badge">${escapeHtml(item.source)}</span>
               <span class="region-badge">${escapeHtml(getRegionLabel(item.region))}</span>
-              <time datetime="${escapeHtml(editionDate || item.publishedAt.toISOString())}" title="${escapeHtml(dateTitle)}">${escapeHtml(dateText)}</time>
+              <time datetime="${escapeHtml(dateOnly || item.publishedAt.toISOString())}" title="${escapeHtml(dateTitle)}">${escapeHtml(dateText)}</time>
             </div>
           </div>
         </a>
@@ -2849,7 +2882,7 @@
         if (Number.isNaN(latestDate.getTime())) return null;
         // TTRの最新検出もエディション暦日で示し、内部の並べ替え時刻をJSTの公開時刻へ見せない。
         const editionParts = site.id === "ttrausnz" ? timeZoneParts(latestDate, "Australia/Sydney") : null;
-        const latestText = editionParts
+        const latestText = site.id === "theage_racing" && /^20\d{2}-\d{2}-\d{2}$/.test(latestIso) ? latestIso : editionParts
           ? `${editionParts.year}-${String(editionParts.month).padStart(2, "0")}-${String(editionParts.day).padStart(2, "0")}`
           : formatDateTime(latestDate);
 

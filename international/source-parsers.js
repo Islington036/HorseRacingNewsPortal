@@ -371,17 +371,66 @@
     for (const match of raw.matchAll(cardPattern)) {
       const block = match[3];
       const heading = block.match(/#{2,4}\s+\[([^\]]+)\]\((https?:\/\/(?:www\.)?theage\.com\.au\/sport\/racing\/[^)]+)\)/i);
-      const publishedAt = (block.match(/^\*\s+([A-Za-z]+\s+\d{1,2},\s+20\d{2})\s*$/m) || [])[1] || "";
+      const date = block.match(/^\*\s+([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2})\s*$/m);
+      const month = date && ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(date[1].slice(0, 3).toLowerCase()) + 1;
+      const publicationDate = month ? `${date[3]}-${String(month).padStart(2, "0")}-${date[2].padStart(2, "0")}` : "";
+      // Readerには公開時刻がない。地域の暦日は並べ替えにだけ使い、午前0時を公開時刻として表示しない。
+      const publishedAt = publicationDate ? zonedDateToUtc({ year: Number(date[3]), month, day: Number(date[2]), hour: 0, minute: 0 }, "Australia/Melbourne") : null;
       if (!heading || !publishedAt || canonicalUrl(heading[2]) !== canonicalUrl(match[2])) continue;
       items.push({
         title: cleanWhitespace(heading[1]),
         url: heading[2],
         publishedAt,
+        publicationDate,
         thumbnail: match[1]
       });
     }
 
     return items;
+  }
+
+  // The Ageの総合Sport RSSから、正式な競馬記事URLとタイムゾーン付き公開日時だけを読む。
+  function extractTheAgeFeedItems(doc, site) {
+    if (doc.querySelector("parsererror") || doc.documentElement?.localName !== "rss") {
+      throw new Error("The AgeのRSSを解析できませんでした");
+    }
+    return [...doc.querySelectorAll("item")].map((entry) => {
+      const value = (selector) => cleanWhitespace(entry.querySelector(selector)?.textContent);
+      const url = canonicalUrl(value("link"));
+      if (!isCandidateArticleUrl(url, site) || !/^https:\/\/www\.theage\.com\.au\/sport\/racing\/[^/]+-20\d{6}-p[a-z0-9]+\.html$/i.test(url)) return null;
+      const date = value("pubDate");
+      const publishedAt = hasExplicitTimezone(date) || /(?:Z|[+-]\d{2}:?\d{2})$/i.test(date) ? parseInternationalDate(date) : null;
+      if (!value("title") || !publishedAt) return null;
+      return { title: value("title"), url, publishedAt, thumbnail: entry.querySelector("enclosure")?.getAttribute("url") || "" };
+    }).filter(Boolean);
+  }
+
+  // RSSは正確な時刻、ReaderはRSSの20件上限から漏れる競馬記事の範囲を補う。片方の障害で成功分を捨てない。
+  async function readTheAgeArticleItems(readFeed, readReader, daysBack) {
+    const [feed, reader] = await Promise.allSettled([readFeed(), readReader()]);
+    const feedItems = feed.status === "fulfilled" ? feed.value : [];
+    const readerItems = reader.status === "fulfilled" ? reader.value : [];
+    const itemsByUrl = new Map(readerItems.map((item) => [canonicalUrl(item.url), { ...item, url: canonicalUrl(item.url) }]));
+    feedItems.forEach((item) => {
+      const url = canonicalUrl(item.url);
+      // RSSの正式日時を優先し、Readerだけが持つ画像は欠損時に限って補う。日付のみのフラグは引き継がない。
+      itemsByUrl.set(url, { ...item, url, thumbnail: item.thumbnail || itemsByUrl.get(url)?.thumbnail || "" });
+    });
+    if (!itemsByUrl.size) {
+      // 総合RSSに競馬がないだけではサイト全体の0件を証明できず、Readerも読めなければ未確認として扱う。
+      throw (reader.status === "rejected" && reader.reason) || (feed.status === "rejected" && feed.reason) || new Error("The Ageの競馬記事を確認できませんでした");
+    }
+    const now = Date.now();
+    const cutoff = now - daysBack * 86400000;
+    if (!readerItems.length && !feedItems.some((item) => item.publishedAt >= cutoff && item.publishedAt <= now + 12 * 3600000)) {
+      // 総合RSSは件数上限があり、一覧を確認できなければ古い競馬記事だけで期間内0件とは断定できない。
+      throw new Error("The Ageの一覧を確認できず、期間内の記事の有無を確定できませんでした");
+    }
+    return {
+      items: [...itemsByUrl.values()].sort((left, right) => right.publishedAt - left.publishedAt),
+      partial: feed.status === "rejected" || reader.status === "rejected" || !readerItems.length,
+      route: feedItems.length ? readerItems.length ? "official-rss+reader" : "official-rss" : "reader"
+    };
   }
 
   // RacenetのReaderカードから、実写真・本文・個別記事URLだけを抜き出す。
@@ -562,6 +611,7 @@
     extractRacenetReaderCards,
     extractRacingTvReaderCards,
     extractTheAgeReaderItems,
+    extractTheAgeFeedItems,
     extractTtrTitleMatchingSlug,
     hasExplicitTimezone,
     isCandidateArticleUrl,
@@ -575,6 +625,7 @@
     pickRacenetReaderTitle,
     readZonedParts,
     readMirrorArticleItems,
+    readTheAgeArticleItems,
     zonedDateToUtc
   });
 });

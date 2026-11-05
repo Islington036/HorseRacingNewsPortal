@@ -6,6 +6,7 @@ const {
   extractRacenetReaderCards,
   extractRacingTvReaderCards,
   extractTheAgeReaderItems,
+  extractTheAgeFeedItems,
   hasExplicitTimezone,
   isAllowedWordPressPost,
   isCandidateArticleUrl,
@@ -14,10 +15,11 @@ const {
   parseIrishRacingDateTime,
   parseInternationalDate,
   parseExplicitTimezoneDate,
-  pickRacenetReaderTitle
+  pickRacenetReaderTitle,
+  readTheAgeArticleItems
 } = require("../international/source-parsers.js");
 
-function run() {
+async function run() {
   testRacenetReaderCards();
   testRacenetLongTitleFallback();
   testRacenetFixedPages();
@@ -25,10 +27,11 @@ function run() {
   testSharedArticleUrlGate();
   testRacingTvReaderCards();
   testTheAgeReaderItems();
+  await testTheAgeFeedAuthority();
   testIrishRacingDateTime();
   testIrishRacingReaderItems();
   testAllowedWordPressPosts();
-  console.log("international-source-parsers: 10 tests passed");
+  console.log("international-source-parsers: 11 tests passed");
 }
 
 // 通常カードとpremium鍵付きカードの両方で、最初の実写真と個別記事URLを維持する。
@@ -165,8 +168,40 @@ function testTheAgeReaderItems() {
 
   assert.equal(items.length, 2);
   assert.equal(items[0].title, "First story headline");
-  assert.equal(items[0].publishedAt, "September 4, 2026");
+  assert.equal(items[0].publishedAt.toISOString(), "2026-09-03T14:00:00.000Z");
+  assert.equal(items[0].publicationDate, "2026-09-04");
   assert.equal(items[1].thumbnail, "https://images.example/second.jpg");
+}
+
+// RSSの正式時刻をURL照合で優先し、Readerだけの記事と片方の障害も同じ処理で維持する。
+async function testTheAgeFeedAuthority() {
+  const url = "https://www.theage.com.au/sport/racing/oaks-day-20261105-p61bb1.html";
+  const site = { id: "theage_racing", baseUrl: "https://www.theage.com.au", url: "https://www.theage.com.au/sport/racing", pathHints: ["/sport/racing/"] };
+  const entry = (link, date = "Thu, 05 Nov 2026 19:00:49 +1100") => ({ querySelector(selector) {
+    if (selector === "enclosure") return { getAttribute: () => "https://static.ffx.io/news.jpg" };
+    return { textContent: { link, title: "Oaks day full headline", pubDate: date }[selector] || "" };
+  } });
+  const doc = { documentElement: { localName: "rss" }, querySelector: () => null, querySelectorAll: () => [entry(url + "?ref=rss&utm_source=sport"), entry("https://www.theage.com.au/sport/soccer/other-20261105-p61bbc.html")] };
+  const feed = extractTheAgeFeedItems(doc, site);
+  assert.equal(feed.length, 1);
+  assert.equal(feed[0].url, url);
+  assert.equal(feed[0].publishedAt.toISOString(), "2026-11-05T08:00:49.000Z");
+  assert.equal(extractTheAgeFeedItems({ ...doc, querySelectorAll: () => [entry(url, "November 5, 2026 19:00")] }, site).length, 0);
+  const reader = [{ title: "Reader headline", url, publishedAt: new Date("2026-11-04T13:00:00Z"), publicationDate: "2026-11-05", thumbnail: "" },
+    { title: "Reader-only headline", url: url.replace("oaks-day", "other-race"), publishedAt: new Date("2026-11-04T13:00:00Z"), publicationDate: "2026-11-05", thumbnail: "https://static.ffx.io/other.jpg" }];
+  const both = await readTheAgeArticleItems(async () => feed, async () => reader, 3);
+  assert.equal(both.items.length, 2);
+  assert.equal(both.items[0].title, "Oaks day full headline");
+  assert.equal(both.items[0].publicationDate, undefined);
+  assert.equal(both.items[1].publicationDate, "2026-11-05");
+  assert.equal((await readTheAgeArticleItems(async () => [], async () => reader, 3)).route, "reader");
+  assert.equal((await readTheAgeArticleItems(async () => { throw new Error("RSS unavailable"); }, async () => reader, 3)).items.length, 2);
+  const currentFeed = [{ ...feed[0], publishedAt: new Date() }];
+  assert.equal((await readTheAgeArticleItems(async () => currentFeed, async () => { throw new Error("Reader unavailable"); }, 3)).route, "official-rss");
+  await assert.rejects(readTheAgeArticleItems(async () => [], async () => { throw new Error("Reader unavailable"); }, 3), /Reader unavailable/);
+  const olderFeed = [{ ...feed[0], publishedAt: new Date(Date.now() - 2 * 86400000) }];
+  await assert.rejects(readTheAgeArticleItems(async () => olderFeed, async () => [], 1), /有無を確定できません/);
+  assert.equal((await readTheAgeArticleItems(async () => olderFeed, async () => [], 3)).items.length, 1);
 }
 
 // Irish Racingの一覧時刻は端末ローカル時刻ではなく、アイルランドの夏時間・冬時間として解釈する。
@@ -221,4 +256,4 @@ function card(image, body, slug, decoration = "") {
   return `[![Image](${image})${decoration} ${body}](https://www.racenet.com.au/news/${slug})`;
 }
 
-run();
+run().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -24,8 +24,82 @@ async function run() {
   await testDailyMailMotorSportExclusion(harness);
   await testScmpRequiresStructuredDates();
   await testMirrorOfficialFallback();
+  await testTheAgeDatePrecision();
 
-  console.log("international-app: 13 tests passed");
+  console.log("international-app: 14 tests passed");
+}
+
+// Reader由来の暦日を時刻として表示せず、キャッシュと最新検出注記へも同じ精度を残す。
+async function testTheAgeDatePrecision() {
+  const { api, context } = loadAppHarness();
+  const site = context.window.InternationalHorseRacingPortalDefinition.CONFIG.SITES.find((entry) => entry.id === "theage_racing");
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Melbourne", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const item = api.normalizeItem({ title: "The Age racing headline", url: site.url + "/racing-headline-20261105-p61bb1.html", publishedAt: sourceParsers.parseTtrEditionDate(date), publicationDate: date, thumbnail: "" }, site, 0);
+  assert.match(api.renderCard(item), new RegExp(`<time datetime="${date}"[^>]*>${date}</time>`));
+  let stored;
+  context.localStorage = { getItem: () => stored, setItem: (_key, value) => { stored = value; } };
+  api.state.allItems = [item];
+  api.updateSiteLatest(site, [item]);
+  api.saveCache();
+  api.loadCache();
+  assert.equal(api.state.allItems[0].publicationDate, date);
+  assert.equal(api.state.siteLatest[site.id], date);
+  assert.match(api.renderCard(api.state.allItems[0]), new RegExp(`<time datetime="${date}"`));
+  api.state.allItems = [];
+  api.renderErrors();
+  assert.match(context.document.querySelector("#errorList").innerHTML, new RegExp(date));
+  assert.doesNotMatch(context.document.querySelector("#errorList").innerHTML, /00:00/);
+  const cached = JSON.parse(stored);
+  cached.sourceVersions.theage_racing = 0;
+  stored = JSON.stringify(cached);
+  api.loadCache();
+  assert.equal(api.state.allItems.length, 0);
+
+  // 片側が落ちても新規記事を残し、同一URLの正式時刻と前回のRSS専用記事を維持する。
+  const exactTime = new Date();
+  const exactItem = { ...item, publishedAt: exactTime };
+  delete exactItem.publicationDate;
+  const rssOnly = { ...exactItem, id: site.id + ":rss-only", url: site.url + "/rss-only-20261105-p61bbc.html" };
+  api.state.allItems = [exactItem, rssOnly];
+  const readerDate = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" }).format(new Date(date + "T00:00:00Z"));
+  const reader = `[![Image](https://static.ffx.io/race.jpg)](${item.url})\n### [The Age racing headline](${item.url})\n* ${readerDate}`;
+  let failFeed = true;
+  let failReader = false;
+  let feedUrl = item.url;
+  context.DOMParser = class extends FakeDOMParser {
+    parseFromString(text, type) {
+      if (text !== "Age RSS") return super.parseFromString(text, type);
+      return { documentElement: { localName: "rss" }, querySelector: () => null, querySelectorAll: () => [{ querySelector: (selector) =>
+        selector === "enclosure" ? { getAttribute: () => "https://static.ffx.io/race.jpg" } :
+          { textContent: { title: "RSS precise headline", link: feedUrl + "?ref=rss", pubDate: exactTime.toUTCString() }[selector] || "" } }] };
+    }
+  };
+  context.fetch = async (url) => {
+    if (url === site.feedUrl) {
+      if (failFeed) throw new Error("RSS unavailable");
+      return createTextResponse("Age RSS");
+    }
+    if (failReader) throw new Error("Reader unavailable");
+    return createTextResponse(reader);
+  };
+  const partial = await api.fetchSite(site);
+  assert.equal(partial.length, 2);
+  assert.equal(partial.find((entry) => entry.url === item.url).publishedAt.toISOString(), exactTime.toISOString());
+  assert.ok(partial.every((entry) => !entry.publicationDate));
+  const previousDay = new Date(exactTime.getTime() - 86400000);
+  api.state.allItems = [{ ...exactItem, publishedAt: previousDay }, rssOnly];
+  assert.equal((await api.fetchSite(site)).find((entry) => entry.url === item.url).publicationDate, date, "異なる暦日の前回時刻を流用しない");
+  api.state.allItems = [exactItem, rssOnly];
+  failFeed = false;
+  failReader = true;
+  assert.equal((await api.fetchSite(site)).length, 2);
+  failReader = false;
+  assert.equal((await api.fetchSite(site)).length, 1, "両経路正常時は前回だけの記事を残さない");
+  feedUrl = site.url + "/new-rss-20261105-p61bbd.html";
+  const rotatedFeed = await api.fetchSite(site);
+  assert.equal(rotatedFeed.length, 2, "正常なRSSの入れ替わりでも今回の記事だけを返す");
+  assert.equal(rotatedFeed.find((entry) => entry.url === item.url).publishedAt.toISOString(), exactTime.toISOString());
+  assert.equal(rotatedFeed.find((entry) => entry.url === item.url).publicationDate, undefined);
 }
 
 // 古い変換結果だけなら公式カードを照合し、新しいRSSがあるときは不要な詳細取得をしない。
@@ -710,7 +784,8 @@ function loadAppHarness() {
       renderErrors,
       loadCache,
       saveCache,
-      state
+      state,
+      updateSiteLatest
     };
   ${source.slice(iifeEnd)}`;
   const limiterState = { firstResponse: null };
